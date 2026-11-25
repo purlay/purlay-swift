@@ -1,0 +1,27 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.4.3
+      # The server commit the contract lock names; `scripts/contract verify` refuses any other bundle.
+      - name: Prepare pinned contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/doancan/purlay.git "$RUNNER_TEMP/server"
+          git -C "$RUNNER_TEMP/server" checkout de5ba4f6d32a3daefb7524dc93f16bdb451f0fcf
+          (cd "$RUNNER_TEMP/server" && bun install --frozen-lockfile && bun run contract:bundle --out "$GITHUB_WORKSPACE/Contract/bundle")
+      - name: Verify
+        run: scripts/verify

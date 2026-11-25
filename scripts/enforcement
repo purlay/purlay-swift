@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# The architecture rules a compiler does not state by itself. Each one is also run against a copy of the tree with the
+# violation planted, so a rule that stopped looking would be seen here and not discovered in review.
+#
+#   scripts/enforcement            check the tree
+#   scripts/enforcement --demo     plant each violation in a copy and require the check to refuse it
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+check() { # root
+  local root="$1" failed=0
+  # Shared code is platform-neutral: no UI framework. Each app draws its own interface.
+  if grep -rnE '^\s*(@_exported )?import (SwiftUI|AppKit|UIKit|WatchKit)\b' "$root/Sources"; then
+    echo "FAIL: shared code imports a UI framework" >&2; failed=1
+  fi
+  # No third-party dependency.
+  if grep -nE '\.package\(' "$root/Package.swift"; then
+    echo "FAIL: a package dependency; shared code has none" >&2; failed=1
+  fi
+  # No escape from the compiler's concurrency checking.
+  if grep -rnE '(@unchecked Sendable|nonisolated\(unsafe\))' "$root/Sources" 2>/dev/null | grep -v 'enforcement-allow'; then
+    echo "FAIL: an unchecked concurrency escape" >&2; failed=1
+  fi
+  # Production code cannot trap on a value it was handed: no `try!`, `as!`, `fatalError`, and no force unwrap or implicitly
+  # unwrapped optional. A trap cannot be caught, so the rule is prevention. Comment lines, generated code and the test
+  # support library are not looked at.
+  if grep -rnE --include='*.swift' '(try!|as!|fatalError\(|unsafelyUnwrapped|[]A-Za-z0-9_)]!([].),]|[[:space:]]*$))' \
+    "$root/Sources" 2>/dev/null | grep -v '/Generated/' | grep -v '/PurlayTestSupport/' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//'; then
+    echo "FAIL: production code that can trap" >&2; failed=1
+  fi
+  return $failed
+}
+
+if [ "${1:-}" != "--demo" ]; then
+  check . && echo "enforcement: the tree holds every rule"
+  exit
+fi
+
+fail=0
+plant() { # name, file (relative), line
+  local copy
+  copy="$(mktemp -d)"
+  rsync -a --exclude .build --exclude .swiftpm Sources Package.swift "$copy"/
+  printf '%s\n' "$3" >> "$copy/$2"
+  if check "$copy" >/dev/null 2>&1; then echo "  NOT REFUSED  $1" >&2; fail=1; else echo "  refused      $1"; fi
+  rm -rf "$copy"
+}
+check . >/dev/null
+plant "Kit imports SwiftUI" Sources/PurlayKit/App/AppEnvironment.swift "import SwiftUI"
+plant "Kit imports UIKit" Sources/PurlayKit/App/AppEnvironment.swift "import UIKit"
+plant "an unchecked Sendable" Sources/PurlayKit/App/AppEnvironment.swift "final class Leaky: @unchecked Sendable {}"
+plant "a force try" Sources/PurlayKit/App/AppEnvironment.swift "let leaked = try! Data(contentsOf: URL(fileURLWithPath: \"/\"))"
+plant "a fatalError" Sources/PurlayKit/App/AppEnvironment.swift "func leak() { fatalError() }"
+exit $fail

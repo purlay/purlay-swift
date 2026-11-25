@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Everything the pipeline checks, in the same order, on this machine.
+#
+#   scripts/verify
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+
+step "architecture rules, and the demonstration that each one refuses its violation"
+scripts/enforcement
+scripts/enforcement --demo
+
+step "the contract bundle is the one the lock pins, and the generated code is what it generates"
+scripts/contract verify
+scripts/generate --check
+
+step "the generator: build and test"
+(cd Tools/PurlayGen && swift test 2>&1 | grep -q "Test run with .* passed") || { echo "FAIL: Tools/PurlayGen" >&2; exit 1; }
+
+step "format"
+find Sources Tests ContractTests Tools -name '*.swift' -not -path '*/.build/*' -not -path '*/Generated/*' -print0 \
+  | xargs -0 xcrun swift-format lint --strict --parallel
+
+step "tests on macOS, Swift 6, every warning an error"
+swift test 2>&1 | tee /dev/stderr | grep -qE "Test run with .* failed|error:" && { echo "FAIL: tests" >&2; exit 1; } || true
+
+step "builds for iOS 18 and later"
+xcodebuild -scheme purlay-swift-Package -destination 'generic/platform=iOS Simulator' -quiet build
+
+printf '\n\033[1mverify: everything passed\033[0m\n'
