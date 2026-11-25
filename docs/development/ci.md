@@ -59,7 +59,7 @@ repository was holding the runners.
 
 | | Before | After, cold | After, warm |
 |---|---|---|---|
-| `purlay-swift` pull request | 393 s | `test` 188 s, `ios` 124 s, `generated` 104 s | **106–126 s**: `test-contract` 100–110 s, `test-kit` 77 s, `generated` 75–80 s, `ios` 42 s, `rules` 5 s |
+| `purlay-swift` pull request | 393 s | `test` 188 s, `ios` 124 s, `generated` 104 s | **106–126 s**: `test-contract` 94–110 s, `test-kit` 77–90 s, `generated` 68–80 s, `ios` 42–51 s, `rules` 5–6 s |
 | `purlay-swift` release rehearsal | | | 263 s |
 | `purlay-macos` pull request | 337 s | `test` 97 s, `app` 160 s | **100–156 s**: `test` 78–123 s, `app` 96–109 s, `rules` 5–10 s |
 | `purlay-ios` pull request | 535 s (646 s for the first simulator version) | `packages` 106 s, `build` 148 s | **89–97 s**: `packages` 41–77 s, `build` 41–60 s, `rules` 5–12 s |
