@@ -26,3 +26,5 @@ jobs:
           (cd "$RUNNER_TEMP/server" && bun install --frozen-lockfile && bun run contract:bundle --out "$GITHUB_WORKSPACE/Contract/bundle")
       - name: Verify
         run: scripts/verify
+        env:
+          BRANCH: ${{ github.head_ref || github.ref_name }}

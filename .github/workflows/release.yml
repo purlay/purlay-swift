@@ -1,0 +1,36 @@
+name: Release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: xcode-27
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.4.3
+      - name: The tag has release notes
+        run: scripts/release-notes "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+      - name: Prepare pinned contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import json; print(json.load(open("Contract/contract.lock"))["serverVersion"])')
+          git clone --depth 1 --branch "v$version" https://github.com/purlay/purlay.git "$RUNNER_TEMP/server"
+          (cd "$RUNNER_TEMP/server" && bun install --frozen-lockfile && bun run contract:bundle --out "$GITHUB_WORKSPACE/Contract/bundle")
+      - name: Verify
+        run: scripts/verify
+        env:
+          BRANCH: main
+      - name: Publish
+        run: gh release create "$GITHUB_REF_NAME" --title "purlay-swift ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
