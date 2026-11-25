@@ -12,7 +12,7 @@ framework: the apps draw their own interface.
 | `PurlayTestSupport` | Fakes and builders for testing code that uses the Kit |
 
 Consumers: [`purlay-macos`](https://github.com/purlay/purlay-macos), [`purlay-ios`](https://github.com/purlay/purlay-ios).
-Platforms: macOS 26+, iOS 18+.
+Platforms: macOS 26 and later (built for 27), iOS 18 and later (built for 27).
 
 ## Using it
 
