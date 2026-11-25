@@ -30,15 +30,6 @@ struct ThreadModelTests {
         return h
     }
 
-    /// Waits, up to a second, for what a task started by the model has to do; a test that asserts at once is a test of the scheduler.
-    private func eventually(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<100 {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return condition()
-    }
-
     private func calls(_ h: ModelHarness, _ suffix: String, method: String = "GET") -> [HTTPRequest] {
         h.server.requests.filter { $0.method == method && $0.url.path.hasSuffix(suffix) }
     }
