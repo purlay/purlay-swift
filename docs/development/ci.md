@@ -37,6 +37,11 @@ eleven-minute job (`Testing started` came 483 s after the build), whatever was t
 A pull request runs the app's logic on macOS and builds the app for iOS. `purlay-ios` runs its `simulator` lane for a pull request that
 changes the app itself, and always on `main`, on the schedule and for a release.
 
+**A pull request that changes only documents compiles nothing.** Every macOS job pays a fixed cost before it does any work (below), so a
+`changes` job reads the pull request's files and, when every one is a document (`docs/`, `*.md`, `LICENSE`, `NOTICE`, `.editorconfig`,
+`CODEOWNERS`), the compiling lanes are skipped. `verify` accepts a skipped lane only when that job said so; an empty file list, any
+other event (`main`, the schedule) and any file that is not a document run every lane, so `main` always saves the caches.
+
 **Releases are rehearsed.** Release tags are immutable, so the release workflow can be run by hand from a branch
 (*Actions → Release → Run workflow*): it runs every lane on the release's machine and publishes nothing. The first rehearsal of
 `purlay-swift` found a flaky test that a normal pull request had not.
