@@ -12,8 +12,8 @@ that says how and why; each repository's `CONTRIBUTING.md` says only what is spe
 ## How
 
 **One script, in lanes.** `scripts/verify` takes a lane; CI runs the lanes as separate jobs side by side, and a person runs them all
-(`scripts/verify`). The jobs' names are lanes, not steps: `rules`, `generated`, `test`, `build`, `packages`, `app`, `ios`,
-`simulator`, as each repository has them. One job, `verify`, depends on all of them and is the single check a pull request needs
+(`scripts/verify`). The jobs' names are lanes, not steps: `rules`, `generated`, `test` (or `test-contract` and `test-kit`), `build`,
+`packages`, `app`, `ios`, `simulator`, as each repository has them. One job, `verify`, depends on all of them and is the single check a pull request needs
 (the branch protection asks for it by name).
 
 **Cheap work on a cheap runner.** `rules` (branch name, shared files, architecture rules and their demonstration) needs no Swift and
@@ -43,17 +43,36 @@ changes the app itself, and always on `main`, on the schedule and for a release.
 
 ## What it costs, measured
 
-Hosted runner, 2026-11-25. Before: one job ran `scripts/verify` start to finish. "Cold" is a first run with no cache; "warm" restores
-the compilation cache saved by `main`.
+Hosted runner (Apple M1, virtual, 3 cores, 7 GB), 2026-11-25. Before: one job ran `scripts/verify` start to finish. "Cold" is a first
+run with no cache; "warm" restores the compilation cache saved by `main`. Times are the jobs' own, run side by side, when no other
+repository was holding the runners.
 
 | | Before | After, cold | After, warm |
 |---|---|---|---|
-| `purlay-swift` pull request | 393 s | `test` 188 s, `ios` 124 s, `generated` 104 s | `test` 112 s, `ios` 29 s, `generated` 82 s, `rules` 6 s |
+| `purlay-swift` pull request | 393 s | `test` 188 s, `ios` 124 s, `generated` 104 s | `test` 128–145 s (now two lanes, below), `ios` 32–47 s, `generated` 55–84 s, `rules` 5–8 s; whole run 149–178 s |
 | `purlay-swift` release rehearsal | | | 263 s |
-| `purlay-ios` pull request | 535 s | `packages` 106 s, `build` 148 s | |
-| `purlay-macos` pull request | 337 s | `test` 97 s, `app` 160 s | |
+| `purlay-macos` pull request | 337 s | `test` 97 s, `app` 160 s | `test` 78 s, `app` 96 s, `rules` 10 s; whole run about 100 s |
+| `purlay-ios` pull request | 535 s (646 s for the first simulator version) | `packages` 106 s, `build` 148 s | `packages` 88 s, `build` 141 s, `rules` 7 s |
 
 The jobs of a run start together, so a pull request takes as long as its slowest job, plus the time it waits for a runner.
+
+### Where the time goes, and what does not help
+
+Measured on the runner with the iOS app's build lane, the same cache each time:
+
+| | Time |
+|---|---|
+| the first `xcodebuild` of a job (CI's case) | 66 s |
+| the same, with DerivedData removed | 22 s |
+| an incremental build | 13 s |
+| the build with the cache off | 80 s |
+
+- **The compilation cache works**: with it warm, the 34 Swift compile tasks take 0.9 s in total. What is left is not compiling.
+- **The first `xcodebuild` of every job costs about 45 s more than the next one**, with a lot of system time (disk, service start-up), whatever the cache holds. So a lean macOS lane has a floor of roughly 80–90 s: about 25 s of job set-up, `brew install xcodegen` where it is needed, and the cache restore, plus that first build.
+- **Reading Xcode and the SDKs in the background while the job set itself up did not help** (the read took 22 s and the build lane gained 5 s; the job got slower overall), so the start-up cost is not the toolchain being read from disk for the first time. It is not worth the complexity.
+- **Runs vary**: the same lane took 77 s in one run and 141 s in another on the same runner type, because the machines are shared.
+
+So two minutes is reachable for a pull request only if every macOS lane is lean, and is not a promise: `purlay-macos` meets it, `purlay-swift` and `purlay-ios` are at about two and a half. The levers left are splitting the longest lane (done for `purlay-swift`'s `test`: Contract and Tokens, Kit and TestSupport, side by side), taking `brew install xcodegen` out of the path, and running fewer macOS jobs.
 
 **Waiting for a runner is not in those numbers.** The organisation is on GitHub's free plan: 20 concurrent jobs, 5 of them macOS, shared by
 every repository (the server's own check uses many). With several pull requests open the Swift jobs queue for minutes. That is the plan's

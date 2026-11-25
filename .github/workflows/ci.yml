@@ -46,7 +46,7 @@ jobs:
       - name: Generated code
         run: scripts/verify generated
 
-  test:
+  test-contract:
     runs-on: xcode-27
     timeout-minutes: 20
     steps:
@@ -69,16 +69,50 @@ jobs:
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PURLAY_CACHE_DIR }}
-          key: cas-test-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
-          restore-keys: cas-test-${{ steps.when.outputs.week }}-
-      - name: Format and tests
-        run: scripts/verify test
+          key: cas-test-contract-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+          restore-keys: cas-test-contract-${{ steps.when.outputs.week }}-
+      - name: Format and the Contract and Tokens tests
+        run: scripts/verify test-contract
       - name: Keep the compilation cache
         if: success() && github.ref == 'refs/heads/main' && steps.cas.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ env.PURLAY_CACHE_DIR }}
-          key: cas-test-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+          key: cas-test-contract-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+
+  test-kit:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Contract/bundle
+          key: contract-bundle-${{ hashFiles('Contract/contract.lock') }}
+      - name: Prepare the pinned contract
+        if: steps.bundle.outputs.cache-hit != 'true'
+        run: scripts/prepare-contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - id: when
+        run: |
+          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+          echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - id: cas
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PURLAY_CACHE_DIR }}
+          key: cas-test-kit-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+          restore-keys: cas-test-kit-${{ steps.when.outputs.week }}-
+      - name: The Kit and TestSupport tests
+        run: scripts/verify test-kit
+      - name: Keep the compilation cache
+        if: success() && github.ref == 'refs/heads/main' && steps.cas.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PURLAY_CACHE_DIR }}
+          key: cas-test-kit-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
 
   ios:
     runs-on: xcode-27
@@ -106,7 +140,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [rules, generated, test, ios]
+    needs: [rules, generated, test-contract, test-kit, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:

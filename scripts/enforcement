@@ -13,6 +13,13 @@ check() { # root
   if grep -rnE '^\s*(@_exported )?import (SwiftUI|AppKit|UIKit|WatchKit)\b' "$root/Sources"; then
     echo "FAIL: shared code imports a UI framework" >&2; failed=1
   fi
+  # Every test target runs in CI: CI runs the tests as lanes, and a target that is in none would not be run at all.
+  # (Package.swift is read as one line: swift-format wraps a long target across several.)
+  for target in $(tr '\n' ' ' < "$root/Package.swift" | grep -oE '\.testTarget\( *name: "[A-Za-z0-9]+"' | grep -oE '"[A-Za-z0-9]+"' | tr -d '"'); do
+    if ! grep -q -- "-only-testing:$target" "$root/scripts/verify"; then
+      echo "FAIL: the test target $target is in no lane of scripts/verify" >&2; failed=1
+    fi
+  done
   # No third-party dependency.
   if grep -nE '\.package\(' "$root/Package.swift"; then
     echo "FAIL: a package dependency; shared code has none" >&2; failed=1
@@ -41,6 +48,7 @@ plant() { # name, file (relative), line
   local copy
   copy="$(mktemp -d)"
   rsync -a --exclude .build --exclude .swiftpm Sources Package.swift "$copy"/
+  mkdir -p "$copy/scripts" && cp scripts/verify "$copy/scripts/verify"
   printf '%s\n' "$3" >> "$copy/$2"
   if check "$copy" >/dev/null 2>&1; then echo "  NOT REFUSED  $1" >&2; fail=1; else echo "  refused      $1"; fi
   rm -rf "$copy"
@@ -50,5 +58,6 @@ plant "Kit imports SwiftUI" Sources/PurlayKit/App/AppEnvironment.swift "import S
 plant "Kit imports UIKit" Sources/PurlayKit/App/AppEnvironment.swift "import UIKit"
 plant "an unchecked Sendable" Sources/PurlayKit/App/AppEnvironment.swift "final class Leaky: @unchecked Sendable {}"
 plant "a force try" Sources/PurlayKit/App/AppEnvironment.swift "let leaked = try! Data(contentsOf: URL(fileURLWithPath: \"/\"))"
+plant "a test target that no lane runs" Package.swift '// .testTarget(name: "PurlayOrphanTests")'
 plant "a fatalError" Sources/PurlayKit/App/AppEnvironment.swift "func leak() { fatalError() }"
 exit $fail
