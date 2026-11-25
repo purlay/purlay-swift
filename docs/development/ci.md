@@ -1,0 +1,70 @@
+# Continuous integration
+
+The three Swift repositories (`purlay-swift`, `purlay-macos`, `purlay-ios`) run their checks the same way. This is the one place
+that says how and why; each repository's `CONTRIBUTING.md` says only what is specific to it.
+
+## What it has to be
+
+- A pull request's check: **about two minutes**.
+- A release's check (every lane, on one machine): **five to ten minutes**.
+- `main` stays green, and nobody waits on a check to find out what a local run would have told them.
+
+## How
+
+**One script, in lanes.** `scripts/verify` takes a lane; CI runs the lanes as separate jobs side by side, and a person runs them all
+(`scripts/verify`). The jobs' names are lanes, not steps: `rules`, `generated`, `test`, `build`, `packages`, `app`, `ios`,
+`simulator`, as each repository has them. One job, `verify`, depends on all of them and is the single check a pull request needs
+(the branch protection asks for it by name).
+
+**Cheap work on a cheap runner.** `rules` (branch name, shared files, architecture rules and their demonstration) needs no Swift and
+runs on Linux, where a job starts in seconds. Everything that compiles runs on the Xcode 27 runner.
+
+**A compilation cache that survives a fresh checkout.** A hosted runner is clean every time, and compiling `PurlayContract` and
+`PurlayKit` from nothing took minutes, several times per run. Xcode's compilation cache is content-addressed
+(`COMPILATION_CACHE_ENABLE_CACHING=YES`, `COMPILATION_CACHE_CAS_PATH`): a build in a new checkout reuses what any earlier build with
+the same inputs compiled, with no regard to file timestamps (which is what makes caching DerivedData unreliable). Measured on a
+developer machine, building the iOS app took 22 s cold and 5.5 s with a warm cache and a fresh DerivedData. The cache is kept in
+`PURLAY_CACHE_DIR` (by default `~/Library/Caches/dev.purlay/compilation-cache`, so a person's second run is fast too).
+
+- **`main` and a weekly schedule save it; pull requests only restore it.** A pull request never writes the cache, so a branch cannot
+  leave something behind for another. One key per lane per day, reset each week (`cas-<lane>-<week>-<day>`, restored by the week's
+  prefix) so it cannot grow without end. The Monday run warms the week.
+- **The contract bundle is cached by the lock's digest** and, on a miss, downloaded from the server's release asset
+  (`scripts/prepare-contract`) and compared with `Contract/contract.lock`; it is never re-pinned by accident.
+
+**No simulator in a pull request's check.** Preparing a simulator on a hosted runner took about three and a half minutes of an
+eleven-minute job (`Testing started` came 483 s after the build), whatever was tested; no check that starts one can take two minutes.
+A pull request runs the app's logic on macOS and builds the app for iOS. `purlay-ios` runs its `simulator` lane for a pull request that
+changes the app itself, and always on `main`, on the schedule and for a release.
+
+**Releases are rehearsed.** Release tags are immutable, so the release workflow can be run by hand from a branch
+(*Actions → Release → Run workflow*): it runs every lane on the release's machine and publishes nothing. The first rehearsal of
+`purlay-swift` found a flaky test that a normal pull request had not.
+
+## What it costs, measured
+
+Hosted runner, 2026-11-25. Before: one job ran `scripts/verify` start to finish. "Cold" is a first run with no cache; "warm" restores
+the compilation cache saved by `main`.
+
+| | Before | After, cold | After, warm |
+|---|---|---|---|
+| `purlay-swift` pull request | 393 s | `test` 188 s, `ios` 124 s, `generated` 104 s | `test` 112 s, `ios` 29 s, `generated` 82 s, `rules` 6 s |
+| `purlay-swift` release rehearsal | | | 263 s |
+| `purlay-ios` pull request | 535 s | `packages` 106 s, `build` 148 s | |
+| `purlay-macos` pull request | 337 s | `test` 97 s, `app` 160 s | |
+
+The jobs of a run start together, so a pull request takes as long as its slowest job, plus the time it waits for a runner.
+
+**Waiting for a runner is not in those numbers.** The organisation is on GitHub's free plan: 20 concurrent jobs, 5 of them macOS, shared by
+every repository (the server's own check uses many). With several pull requests open the Swift jobs queue for minutes. That is the plan's
+limit, not the workflows'; it is why a pull request should not be opened on top of another, and why a lane that needs macOS is split
+only when it saves more than the extra job costs.
+
+## When you change it
+
+- A change that makes a pull request's check slower needs a reason in its description; measure it on the runner, not on your machine
+  (the runner is six to nine times slower).
+- A new lane is a job that `verify` depends on, or it is not checked.
+- Pin every action to a commit SHA with its version in a comment; Dependabot keeps them current.
+- A test that sleeps a guessed number of milliseconds and then asserts is a test of the scheduler; wait for the condition
+  (`eventually`).
