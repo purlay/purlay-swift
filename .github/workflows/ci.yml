@@ -3,28 +3,114 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Monday morning: build once on main so the week's pull requests start from a warm compilation cache.
+  schedule:
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
+env:
+  PURLAY_CACHE_DIR: ${{ github.workspace }}/.cache/compilation
+
+# The lanes of scripts/verify run side by side; `verify` at the end is the one check a pull request needs.
 jobs:
-  verify:
-    runs-on: xcode-27
-    timeout-minutes: 45
+  rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: oven-sh/setup-bun@v2.2.0
-        with:
-          bun-version: 1.4.3
-      # The server release the contract lock names: the lock is the one place that says which server this is built on,
-      # and `scripts/contract verify` refuses any bundle that is not that release's.
-      - name: Prepare pinned contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(python3 -c 'import json; print(json.load(open("Contract/contract.lock"))["serverVersion"])')
-          git clone --depth 1 --branch "v$version" https://github.com/purlay/purlay.git "$RUNNER_TEMP/server"
-          (cd "$RUNNER_TEMP/server" && bun install --frozen-lockfile && bun run contract:bundle --out "$GITHUB_WORKSPACE/Contract/bundle")
-      - name: Verify
-        run: scripts/verify
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rules
+        run: scripts/verify rules
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
+          GITHUB_TOKEN: ${{ github.token }}
+
+  generated:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Contract/bundle
+          key: contract-bundle-${{ hashFiles('Contract/contract.lock') }}
+      - name: Prepare the pinned contract
+        if: steps.bundle.outputs.cache-hit != 'true'
+        run: scripts/prepare-contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Generated code
+        run: scripts/verify generated
+
+  test:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Contract/bundle
+          key: contract-bundle-${{ hashFiles('Contract/contract.lock') }}
+      - name: Prepare the pinned contract
+        if: steps.bundle.outputs.cache-hit != 'true'
+        run: scripts/prepare-contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - id: when
+        run: |
+          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+          echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - id: cas
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PURLAY_CACHE_DIR }}
+          key: cas-test-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+          restore-keys: cas-test-${{ steps.when.outputs.week }}-
+      - name: Format and tests
+        run: scripts/verify test
+      - name: Keep the compilation cache
+        if: success() && github.ref == 'refs/heads/main' && steps.cas.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PURLAY_CACHE_DIR }}
+          key: cas-test-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+
+  ios:
+    runs-on: xcode-27
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: when
+        run: |
+          echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+          echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      - id: cas
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PURLAY_CACHE_DIR }}
+          key: cas-ios-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+          restore-keys: cas-ios-${{ steps.when.outputs.week }}-
+      - name: Build for iOS
+        run: scripts/verify ios
+      - name: Keep the compilation cache
+        if: success() && github.ref == 'refs/heads/main' && steps.cas.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PURLAY_CACHE_DIR }}
+          key: cas-ios-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
+
+  verify:
+    if: always()
+    needs: [rules, generated, test, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every lane passed
+        run: |
+          echo '${{ toJSON(needs) }}'
+          test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}" = "false"
