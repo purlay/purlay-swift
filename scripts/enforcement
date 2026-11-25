@@ -14,7 +14,8 @@ check() { # root
     echo "FAIL: shared code imports a UI framework" >&2; failed=1
   fi
   # Every test target runs in CI: CI runs the tests as lanes, and a target that is in none would not be run at all.
-  for target in $(grep -oE '\.testTarget\(\s*name: "[A-Za-z0-9]+"|\.testTarget\(name: "[A-Za-z0-9]+"' "$root/Package.swift" | grep -oE '"[A-Za-z0-9]+"' | tr -d '"'); do
+  # (Package.swift is read as one line: swift-format wraps a long target across several.)
+  for target in $(tr '\n' ' ' < "$root/Package.swift" | grep -oE '\.testTarget\( *name: "[A-Za-z0-9]+"' | grep -oE '"[A-Za-z0-9]+"' | tr -d '"'); do
     if ! grep -q -- "-only-testing:$target" "$root/scripts/verify"; then
       echo "FAIL: the test target $target is in no lane of scripts/verify" >&2; failed=1
     fi
