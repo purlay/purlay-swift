@@ -54,10 +54,11 @@ repository was holding the runners.
 
 | | Before | After, cold | After, warm |
 |---|---|---|---|
-| `purlay-swift` pull request | 393 s | `test` 188 s, `ios` 124 s, `generated` 104 s | `test` 128–145 s (now two lanes, below), `ios` 32–47 s, `generated` 55–84 s, `rules` 5–8 s; whole run 149–178 s |
+| `purlay-swift` pull request | 393 s | `test` 188 s, `ios` 124 s, `generated` 104 s | **126 s**: `test-contract` 110 s, `test-kit` 77 s, `generated` 75 s, `ios` 42 s, `rules` 5 s |
 | `purlay-swift` release rehearsal | | | 263 s |
-| `purlay-macos` pull request | 337 s | `test` 97 s, `app` 160 s | `test` 78 s, `app` 96 s, `rules` 10 s; whole run about 100 s |
-| `purlay-ios` pull request | 535 s (646 s for the first simulator version) | `packages` 106 s, `build` 148 s | `packages` 88 s, `build` 141 s, `rules` 7 s |
+| `purlay-macos` pull request | 337 s | `test` 97 s, `app` 160 s | **100–125 s**: `test` 78–96 s, `app` 96–109 s, `rules` 5–10 s |
+| `purlay-ios` pull request | 535 s (646 s for the first simulator version) | `packages` 106 s, `build` 148 s | **89 s**: `packages` 77 s, `build` 41 s, `rules` 12 s |
+| a pull request that changes only documents | the same as any other | | the `rules` and `changes` jobs only, about 10 s (expected; not yet observed) |
 
 The jobs of a run start together, so a pull request takes as long as its slowest job, plus the time it waits for a runner.
 
@@ -77,7 +78,7 @@ Measured on the runner with the iOS app's build lane, the same cache each time:
 - **Reading Xcode and the SDKs in the background while the job set itself up did not help** (the read took 22 s and the build lane gained 5 s; the job got slower overall), so the start-up cost is not the toolchain being read from disk for the first time. It is not worth the complexity.
 - **Runs vary**: the same lane took 77 s in one run and 141 s in another on the same runner type, because the machines are shared.
 
-So two minutes is reachable for a pull request only if every macOS lane is lean, and is not a promise: `purlay-macos` meets it, `purlay-swift` and `purlay-ios` are at about two and a half. The levers left are splitting the longest lane (done for `purlay-swift`'s `test`: Contract and Tokens, Kit and TestSupport, side by side), taking `brew install xcodegen` out of the path, and running fewer macOS jobs.
+So two minutes is reachable for a pull request only if every macOS lane is lean, and is not a promise: `purlay-ios` and `purlay-swift` meet it in the measured runs, `purlay-macos` is at about two minutes and varies with the runner. The levers left are splitting the longest lane (done for `purlay-swift`'s `test`: Contract and Tokens, Kit and TestSupport, side by side), taking `brew install xcodegen` out of the path, and running fewer macOS jobs; format sits in the lane with the most slack (`generated` in `purlay-swift`, `packages` in `purlay-ios`).
 
 **Waiting for a runner is not in those numbers.** The organisation is on GitHub's free plan: 20 concurrent jobs, 5 of them macOS, shared by
 every repository (the server's own check uses many). With several pull requests open the Swift jobs queue for minutes. That is the plan's
