@@ -39,7 +39,8 @@ jobs:
           path: ${{ env.PURLAY_CACHE_DIR }}
           key: cas-release-${{ steps.when.outputs.week }}-${{ github.sha }}
           restore-keys: |
-            cas-test-${{ steps.when.outputs.week }}-
+            cas-test-contract-${{ steps.when.outputs.week }}-
+            cas-test-kit-${{ steps.when.outputs.week }}-
             cas-ios-${{ steps.when.outputs.week }}-
       - name: Verify
         run: scripts/verify

@@ -50,12 +50,15 @@ generated() {
   (cd Tools/PurlayGen && swift test 2>&1 | grep -q "Test run with .* passed") || { echo "FAIL: Tools/PurlayGen" >&2; exit 1; }
 }
 
-tests() {
+format() {
   step "format"
   find Sources Tests ContractTests Tools -name '*.swift' -not -path '*/.build/*' -not -path '*/Generated/*' -print0 \
     | xargs -0 xcrun swift-format lint --strict --parallel
+}
+
+tests() { # -only-testing arguments, or none for every test
   step "tests on macOS, Swift 6, every warning an error"
-  xcb -destination 'platform=macOS' test
+  xcb -destination 'platform=macOS' "$@" test
 }
 
 ios() {
@@ -66,10 +69,12 @@ ios() {
 case "${1:-all}" in
   rules) rules ;;
   generated) generated ;;
-  test) tests ;;
+  test) format; tests ;;
+  test-contract) format; tests -only-testing:PurlayContractTests -only-testing:PurlayTokensTests ;;
+  test-kit) tests -only-testing:PurlayKitTests -only-testing:PurlayTestSupportTests ;;
   ios) ios ;;
-  all) rules; generated; tests; ios ;;
-  *) echo "usage: scripts/verify [rules|generated|test|ios]" >&2; exit 2 ;;
+  all) rules; generated; format; tests; ios ;;
+  *) echo "usage: scripts/verify [rules|generated|test|test-contract|test-kit|ios]" >&2; exit 2 ;;
 esac
 
 printf '\n\033[1mverify %s: everything passed\033[0m\n' "${1:-all}"
