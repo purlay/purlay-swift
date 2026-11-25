@@ -63,7 +63,7 @@ repository was holding the runners.
 | `purlay-swift` release rehearsal | | | 263 s |
 | `purlay-macos` pull request | 337 s | `test` 97 s, `app` 160 s | **100–156 s**: `test` 78–123 s, `app` 96–109 s, `rules` 5–10 s |
 | `purlay-ios` pull request | 535 s (646 s for the first simulator version) | `packages` 106 s, `build` 148 s | **89–97 s**: `packages` 41–77 s, `build` 41–60 s, `rules` 5–12 s |
-| a pull request that changes only documents | the same as any other | | the `rules` and `changes` jobs only, about 10 s (this pull request is the first) |
+| a pull request that changes only documents | the same as any other | | **15 s** (`purlay-swift` #13: `rules` and `changes` ran, the four compiling lanes were skipped, `verify` passed) |
 
 The jobs of a run start together, so a pull request takes as long as its slowest job, plus the time it waits for a runner.
 
