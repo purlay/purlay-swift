@@ -15,10 +15,21 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 
 CAS="${PURLAY_CACHE_DIR:-$HOME/Library/Caches/dev.purlay/compilation-cache}"
+# xcodebuild's -quiet hides what a failed test asserted, so the output is kept and, on a failure, the lines that say what failed
+# are printed with the end of it.
 xcb() {
+  local log status=0
+  log="$(mktemp)"
   xcodebuild -scheme purlay-swift-Package "$@" \
     COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS" \
-    COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=NO -quiet
+    COMPILER_INDEX_STORE_ENABLE=NO CODE_SIGNING_ALLOWED=NO >"$log" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    grep -E "error:|✘|recorded an issue|Expectation failed|Failing tests|\*\* (TEST|BUILD) FAILED" "$log" | sort -u | head -40 >&2 || true
+    echo "--- the end of the log:" >&2
+    tail -25 "$log" >&2
+  fi
+  rm -f "$log"
+  return "$status"
 }
 
 rules() {
