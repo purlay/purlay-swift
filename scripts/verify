@@ -3,7 +3,7 @@
 #
 #   scripts/verify            every lane, in order
 #   scripts/verify rules      branch name, shared files, architecture rules and their demonstration   (no Swift needed)
-#   scripts/verify generated  the pinned contract, the generated code, the generator                  (needs Contract/bundle)
+#   scripts/verify generated  format, the pinned contract, the generated code, the generator          (needs Contract/bundle)
 #   scripts/verify test       format and the tests on macOS                                           (needs Contract/bundle)
 #   scripts/verify ios        a build for iOS 18 and later
 #
@@ -43,6 +43,7 @@ rules() {
 }
 
 generated() {
+  format
   step "the contract bundle is the one the lock pins, and the generated code is what it generates"
   scripts/contract verify
   scripts/generate --check
@@ -70,10 +71,10 @@ case "${1:-all}" in
   rules) rules ;;
   generated) generated ;;
   test) format; tests ;;
-  test-contract) format; tests -only-testing:PurlayContractTests -only-testing:PurlayTokensTests ;;
+  test-contract) tests -only-testing:PurlayContractTests -only-testing:PurlayTokensTests ;;
   test-kit) tests -only-testing:PurlayKitTests -only-testing:PurlayTestSupportTests ;;
   ios) ios ;;
-  all) rules; generated; format; tests; ios ;;
+  all) rules; generated; tests; ios ;;
   *) echo "usage: scripts/verify [rules|generated|test|test-contract|test-kit|ios]" >&2; exit 2 ;;
 esac
 

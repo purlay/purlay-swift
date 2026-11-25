@@ -66,7 +66,7 @@ jobs:
         run: scripts/prepare-contract
         env:
           GH_TOKEN: ${{ github.token }}
-      - name: Generated code
+      - name: Format, and the generated code
         run: scripts/verify generated
 
   test-contract:
@@ -96,7 +96,7 @@ jobs:
           path: ${{ env.PURLAY_CACHE_DIR }}
           key: cas-test-contract-${{ steps.when.outputs.week }}-${{ steps.when.outputs.day }}
           restore-keys: cas-test-contract-${{ steps.when.outputs.week }}-
-      - name: Format and the Contract and Tokens tests
+      - name: The Contract and Tokens tests
         run: scripts/verify test-contract
       - name: Keep the compilation cache
         if: success() && github.ref == 'refs/heads/main' && steps.cas.outputs.cache-hit != 'true'
