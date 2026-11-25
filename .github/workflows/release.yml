@@ -2,6 +2,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # A rehearsal: from a branch, every lane runs on the release's machine and nothing is published.
+  workflow_dispatch:
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -17,6 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The tag has release notes
+        if: startsWith(github.ref, 'refs/tags/v')
         run: scripts/release-notes "${GITHUB_REF_NAME#v}" > /dev/null
       - id: bundle
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -45,6 +48,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
 
   publish:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 5

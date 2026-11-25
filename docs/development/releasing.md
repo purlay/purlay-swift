@@ -17,3 +17,9 @@ superseded by the next one.
    release with that entry as its notes.
 5. In each app, raise `from:` in `project.yml` and in the package manifests in one pull request. The apps' checks fail if the
    two disagree.
+
+## Rehearsing
+
+*Actions → Release → Run workflow*, on any branch, runs everything a release runs (every lane, one machine, from the week's
+compilation cache) and publishes nothing, so the time a release takes and whether it would pass are known before a tag exists.
+A tag cannot be taken back.
