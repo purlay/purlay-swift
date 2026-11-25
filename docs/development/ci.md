@@ -42,6 +42,11 @@ changes the app itself, and always on `main`, on the schedule and for a release.
 `CODEOWNERS`), the compiling lanes are skipped. `verify` accepts a skipped lane only when that job said so; an empty file list, any
 other event (`main`, the schedule) and any file that is not a document run every lane, so `main` always saves the caches.
 
+**Tools are installed from their releases, pinned and checked.** `brew install xcodegen` took 9 to 17 s of every job that needed it (it updates
+Homebrew and pours a bottle). `scripts/install-xcodegen`, owned here and copied to the apps, downloads the pinned release, checks its digest, and
+puts it on the `PATH` of the steps that follow: about 4 s. It installs nothing when the pinned version is already there, and a digest that is not
+the pinned one fails and leaves nothing behind. To move to a newer version change the version and the digest the release page shows.
+
 **Releases are rehearsed.** Release tags are immutable, so the release workflow can be run by hand from a branch
 (*Actions → Release → Run workflow*): it runs every lane on the release's machine and publishes nothing. The first rehearsal of
 `purlay-swift` found a flaky test that a normal pull request had not.
