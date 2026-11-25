@@ -1,6 +1,6 @@
 # purlay-swift
 
-The Swift code every Apple client of [Purlay](https://github.com/doancan/purlay) shares: the wire contract, the
+The Swift code every Apple client of [Purlay](https://github.com/purlay/purlay) shares: the wire contract, the
 design tokens, and the client engine (sign-in, transport, realtime, outbox). No UI, no platform-specific
 framework: the apps draw their own interface.
 
@@ -11,13 +11,13 @@ framework: the apps draw their own interface.
 | `PurlayKit` | Session store (Keychain), handshake, API client, realtime connection with replay, optimistic outbox, the app model |
 | `PurlayTestSupport` | Fakes and builders for testing code that uses the Kit |
 
-Consumers: [`purlay-macos`](https://github.com/doancan/purlay-macos), [`purlay-ios`](https://github.com/purlay/purlay-ios).
+Consumers: [`purlay-macos`](https://github.com/purlay/purlay-macos), [`purlay-ios`](https://github.com/purlay/purlay-ios).
 Platforms: macOS 26+, iOS 18+.
 
 ## Using it
 
 ```swift
-.package(url: "https://github.com/doancan/purlay-swift", from: "0.1.0")
+.package(url: "https://github.com/purlay/purlay-swift", from: "0.1.0")
 ```
 
 An app pins one version, and that version pins one server contract (`Contract/contract.lock`). The server's
