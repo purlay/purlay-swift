@@ -15,13 +15,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: 1.4.3
-      # The server commit the contract lock names; `scripts/contract verify` refuses any other bundle.
+      # The server release the contract lock names: the lock is the one place that says which server this is built on,
+      # and `scripts/contract verify` refuses any bundle that is not that release's.
       - name: Prepare pinned contract
         shell: bash
         run: |
           set -euo pipefail
-          git clone https://github.com/purlay/purlay.git "$RUNNER_TEMP/server"
-          git -C "$RUNNER_TEMP/server" checkout de5ba4f6d32a3daefb7524dc93f16bdb451f0fcf
+          version=$(python3 -c 'import json; print(json.load(open("Contract/contract.lock"))["serverVersion"])')
+          git clone --depth 1 --branch "v$version" https://github.com/purlay/purlay.git "$RUNNER_TEMP/server"
           (cd "$RUNNER_TEMP/server" && bun install --frozen-lockfile && bun run contract:bundle --out "$GITHUB_WORKSPACE/Contract/bundle")
       - name: Verify
         run: scripts/verify

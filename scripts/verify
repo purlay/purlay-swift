@@ -11,6 +11,9 @@ step "architecture rules, and the demonstration that each one refuses its violat
 scripts/enforcement
 scripts/enforcement --demo
 
+step "shared files are the owners' copies"
+scripts/check-shared-files
+
 step "the contract bundle is the one the lock pins, and the generated code is what it generates"
 scripts/contract verify
 scripts/generate --check
