@@ -12,14 +12,17 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 if [ "${PURLAY_OFFLINE:-}" = "1" ]; then echo "check-shared-files: skipped (PURLAY_OFFLINE=1)"; exit 0; fi
 
-RAW=https://raw.githubusercontent.com/purlay
+# The contents API, not raw.githubusercontent.com: that one is cached for minutes, and a change at the owner must be seen at once.
+API=https://api.github.com/repos/purlay
+auth=()
+[ -n "${GITHUB_TOKEN:-}" ] && auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
 scratch="$(mktemp -d)"; trap 'rm -rf "$scratch"' EXIT
 failed=0
 
 compare() { # owner path
   local owner="$1" path="$2"
   [ -f "$path" ] || { echo "MISSING  $path (owned by $owner)" >&2; failed=1; return; }
-  if ! curl -fsSL --retry 2 "$RAW/$owner/main/$path" -o "$scratch/file"; then
+  if ! curl -fsSL --retry 2 "${auth[@]}" -H "Accept: application/vnd.github.raw+json" "$API/$owner/contents/$path?ref=main" -o "$scratch/file"; then
     echo "FAIL: cannot read $owner/$path" >&2; failed=1; return
   fi
   if cmp -s "$scratch/file" "$path"; then echo "ok       $path"; else echo "DIFFERS  $path (owned by $owner)" >&2; failed=1; fi
