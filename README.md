@@ -52,4 +52,5 @@ Generated code (`Sources/*/Generated`) is never edited by hand: `scripts/contrac
 
 ## License
 
-[AGPL-3.0](LICENSE). Contributions are under the [contributor licence agreement](CLA.md).
+Contributing: [`CONTRIBUTING.md`](CONTRIBUTING.md). [AGPL-3.0](LICENSE); contributions are under the
+[contributor licence agreement](CLA.md).

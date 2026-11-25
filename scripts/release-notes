@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# The CHANGELOG.md entry of one version, for the release's notes; fails when there is none.
+#
+#   scripts/release-notes 0.1.0
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+version="${1:?usage: scripts/release-notes VERSION}"
+notes="$(awk -v heading="## $version " 'index($0, heading) == 1 { found = 1; next } found && /^## / { exit } found { print }' CHANGELOG.md)"
+[ -n "$(printf '%s' "$notes" | tr -d '[:space:]')" ] || { echo "FAIL: CHANGELOG.md has no entry for $version" >&2; exit 1; }
+printf '%s\n' "$notes"
