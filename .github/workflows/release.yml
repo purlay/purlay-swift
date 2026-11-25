@@ -2,35 +2,59 @@ name: Release
 on:
   push:
     tags: ['v*']
-permissions:
-  contents: write
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
+permissions:
+  contents: read
+env:
+  PURLAY_CACHE_DIR: ${{ github.workspace }}/.cache/compilation
+
 jobs:
-  release:
+  verify:
     runs-on: xcode-27
-    timeout-minutes: 45
-    env:
-      GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: oven-sh/setup-bun@v2.2.0
-        with:
-          bun-version: 1.4.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: The tag has release notes
-        run: scripts/release-notes "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
-      - name: Prepare pinned contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          version=$(python3 -c 'import json; print(json.load(open("Contract/contract.lock"))["serverVersion"])')
-          git clone --depth 1 --branch "v$version" https://github.com/purlay/purlay.git "$RUNNER_TEMP/server"
-          (cd "$RUNNER_TEMP/server" && bun install --frozen-lockfile && bun run contract:bundle --out "$GITHUB_WORKSPACE/Contract/bundle")
+        run: scripts/release-notes "${GITHUB_REF_NAME#v}" > /dev/null
+      - id: bundle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: Contract/bundle
+          key: contract-bundle-${{ hashFiles('Contract/contract.lock') }}
+      - name: Prepare the pinned contract
+        if: steps.bundle.outputs.cache-hit != 'true'
+        run: scripts/prepare-contract
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - id: when
+        run: echo "week=$(date -u +%G-%V)" >> "$GITHUB_OUTPUT"
+      # A release starts from the latest compilation cache of the week and every lane runs, in order, on one machine.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ env.PURLAY_CACHE_DIR }}
+          key: cas-release-${{ steps.when.outputs.week }}-${{ github.sha }}
+          restore-keys: |
+            cas-test-${{ steps.when.outputs.week }}-
+            cas-ios-${{ steps.when.outputs.week }}-
       - name: Verify
         run: scripts/verify
         env:
           BRANCH: main
-      - name: Publish
-        run: gh release create "$GITHUB_REF_NAME" --title "purlay-swift ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+          GITHUB_TOKEN: ${{ github.token }}
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Publish the release
+        run: |
+          scripts/release-notes "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" --title "purlay-swift ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
