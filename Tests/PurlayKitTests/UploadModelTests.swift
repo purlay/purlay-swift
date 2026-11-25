@@ -28,14 +28,6 @@ struct UploadModelTests {
         h.server.requests.filter { $0.method == "POST" && $0.url.path.hasSuffix("/uploads") }
     }
 
-    private func eventually(_ condition: () -> Bool) async -> Bool {
-        for _ in 0..<100 {
-            if condition() { return true }
-            try? await Task.sleep(for: .milliseconds(10))
-        }
-        return condition()
-    }
-
     @Test(
         "a chosen file is uploaded at once under an id of the app's making, and is done with the attachment the server gave"
     )

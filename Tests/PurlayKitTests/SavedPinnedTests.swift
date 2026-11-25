@@ -183,9 +183,10 @@ struct SavedPinnedTests {
     func savedLateMutation() async {
         let target = them(1_000, "follow up")
         let h = await opened([target], saved: [target.id.value: "in_progress"])
-        h.server.edit { $0.saveDelay = 100 }
+        h.server.edit { $0.saveDelay = 300 }
         let slow = Task { await h.model.setSavedState(.completed, target) }
-        try? await Task.sleep(for: .milliseconds(20))
+        // The first change has to be in flight before the second is made; a guessed sleep would only test the scheduler.
+        #expect(await eventually { calls(h, "PUT", "/saved").count == 1 })
         await h.model.setSavedState(.archived, target)
         #expect(calls(h, "PUT", "/saved").count == 1)
         _ = await h.model.signOut(.thisDevice)
