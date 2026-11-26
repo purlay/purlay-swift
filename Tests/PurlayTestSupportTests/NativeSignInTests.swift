@@ -24,7 +24,8 @@ struct NativeSignInTests {
 
     private func parts(
         authenticator answers: [ScriptedAuthenticator.Answer], transport steps: [ScriptedTransport.Step],
-        deviceName: String = "Test Mac", attempts: [SignInAttempt]? = nil, store: (any SessionStore)? = nil
+        deviceName: String = "Test Mac", platform: ClientPlatform = .macOS,
+        attempts: [SignInAttempt]? = nil, store: (any SessionStore)? = nil
     ) -> (Parts, any SessionStore) {
         let transport = ScriptedTransport(steps)
         let authenticator = ScriptedAuthenticator(answers)
@@ -32,7 +33,8 @@ struct NativeSignInTests {
         let used: any SessionStore = store ?? memory
         let counter = Mutex(0)
         let signIn = NativeSignIn(
-            transport: transport, appVersion: SemanticVersion("0.1.0")!, authenticator: authenticator, store: used,
+            transport: transport, appVersion: SemanticVersion("0.1.0")!, platform: platform,
+            authenticator: authenticator, store: used,
             deviceName: deviceName,
             makeAttempt: {
                 guard let attempts else { return SignInAttempt.make() }
@@ -81,6 +83,17 @@ struct NativeSignInTests {
         #expect(!page.absoluteString.contains(sent.verifier))
         #expect(try p.store.load(for: server) == session)
         #expect(p.store.saves == 1)
+    }
+
+    @Test("an iOS sign-in names iOS in the browser and in the token request")
+    func iOSPlatform() async throws {
+        let (p, _) = parts(authenticator: [ScriptedAuthenticator.answering()], transport: [created()], platform: .iOS)
+        _ = try await p.signIn.signIn(to: server, origin: canonical)
+
+        let page = try #require(await p.authenticator.pages.first)
+        let query = try #require(URLComponents(url: page, resolvingAgainstBaseURL: false)?.queryItems)
+        #expect(query.first { $0.name == "platform" }?.value == "ios")
+        #expect(await p.transport.requests.first?.headers["X-Purlay-Client"] == "ios/0.1.0 contract/1")
     }
 
     @Test("the device name told to the server is a name the server accepts")

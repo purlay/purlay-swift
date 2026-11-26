@@ -62,7 +62,9 @@ public struct NativeSignIn: Sendable {
     /// Signs in to `server`, whose handshake said `origin` is its canonical address. A new attempt each call.
     public func signIn(to server: ServerAddress, origin: ServerAddress) async throws(SignInError) -> StoredSession {
         let attempt = makeAttempt()
-        guard let page = attempt.authorizationURL(on: server), let scheme = Callback.expected?.scheme else {
+        guard let page = attempt.authorizationURL(on: server, platform: platform),
+            let scheme = Callback.expected?.scheme
+        else {
             throw .browserFailed("the sign-in address could not be made")
         }
 

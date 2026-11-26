@@ -50,9 +50,10 @@ struct HandoffTests {
         #expect(url.port == 8443)
         #expect(url.path == "/sign-in/native")
         let items = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems)
-        #expect(Set(items.map(\.name)) == ["challenge", "state"])
+        #expect(Set(items.map(\.name)) == ["challenge", "state", "platform"])
         #expect(items.first { $0.name == "challenge" }?.value == attempt.challenge)
         #expect(items.first { $0.name == "state" }?.value == attempt.state)
+        #expect(items.first { $0.name == "platform" }?.value == "macos")
         #expect(!url.absoluteString.contains(attempt.verifier))
         #expect(url.fragment == nil)
     }
