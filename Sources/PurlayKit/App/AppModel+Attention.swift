@@ -90,6 +90,30 @@ extension AppModel {
         }
     }
 
+    /// The person used the app, in a window in front of them (D-143): the server keeps them active, not away, and holds their
+    /// pushes for the workspace. The engine rations the word to one a minute; called on every input, it costs a comparison.
+    public func noteActivity() {
+        guard isActive else { return }
+        let owner = sessionOwner ?? self
+        guard let workspace = owner.workspace else { return }
+        owner.engine?.announceActive(workspace: workspace.id)
+    }
+
+    /// Who is here in the open workspace, read whole: at the start, and after a time the socket was away. Read again later only
+    /// when the network failed it; a server that cannot say leaves what frames tell.
+    @discardableResult func loadPresence() async -> Bool {
+        guard let api, let workspace, let engine else { return true }
+        let context = contextGeneration
+        do {
+            let snapshot = try await api.getPresence(workspaceId: workspace.id.value)
+            guard context == contextGeneration else { return true }
+            engine.hearPresence(snapshot.online)
+            return true
+        } catch {
+            return (error as? TransportError)?.isTransient != true
+        }
+    }
+
     private func storedDeepWork() -> Timestamp? {
         me?.memberships.first(where: { $0.workspace.id == workspace?.id })?.deepWorkUntil
     }

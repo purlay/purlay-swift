@@ -94,6 +94,7 @@ public final class AppModel {
         case ready
     }
 
+    var chatRouteUnavailable = false
     public internal(set) var settingsPage: SettingsPage = .general
     public private(set) var phase: Phase = .launching {
         didSet { onPhaseChange?() }
@@ -676,6 +677,7 @@ public final class AppModel {
     func bootstrap() async {
         guard let server, let origin, let manager else { return }
         phase = .loading
+        chatRouteUnavailable = false
         let context = contextGeneration
         let client = APIClient(
             configuration: APIConfiguration(
@@ -713,14 +715,27 @@ public final class AppModel {
             workspace = membership.workspace
             loadSidebarLayout()
             environment.preferences.set(membership.workspace.slug, for: "workspace")
+            guard chatAvailable else {
+                phase = .ready
+                return
+            }
+            let channels: ChannelList
+            do {
+                channels = try await api.listChannels(workspaceId: membership.workspace.id.value)
+            } catch let error as APIError where error.status == 404 && error.code.rawValue == "ROUTE_NOT_FOUND" {
+                guard context == contextGeneration else { return }
+                // During a rollout, the node serving channels can have a different module set from /api/me.
+                chatRouteUnavailable = true
+                phase = .ready
+                return
+            }
+            guard context == contextGeneration else { return }
             let engine = makeEngine(me: me, client: client, api: api, origin: origin, manager: manager)
             self.engine = engine
             let load = engine.restore()
             if load.unrestorable > 0 { say(.unrestorable(load.unrestorable)) }
             if load.corruptFile != nil { say(.outboxCorrupt) }
-            let channels = try await api.listChannels(workspaceId: membership.workspace.id.value)
-            guard context == contextGeneration else { return }
-            // The baseline first: giving the engine its channels makes the model look, and what was already waiting is not news.
+            // Prime the unread baseline before publishing the channel list.
             attention.prime(channels)
             engine.setChannels(channels)
             watchJoined()
@@ -729,6 +744,8 @@ public final class AppModel {
             sync()
             await refreshPeople()
             guard context == contextGeneration else { return }
+            noteActivity()
+            reread(.presence(workspace: membership.workspace.id)) { await $0.loadPresence() }
             reread(.reminders(workspace: membership.workspace.id)) { await $0.loadReminders() }
             reread(.saved(workspace: membership.workspace.id)) { await $0.reloadSaved() }
             let remembered = environment.preferences.string(for: "channel.\(membership.workspace.slug)").flatMap(
@@ -913,7 +930,10 @@ public final class AppModel {
         guard let engine else { return }
         chat = engine.chat
         pending = engine.pending
+        let wasOpen = connection == .open
         connection = engine.status
+        // Connected while the person is in front of the app: they are here, and a server that restarted has to be told.
+        if !wasOpen, connection == .open { noteActivity() }
         degraded = engine.degraded
         markReadIfSeen()
         if sessionOwner == nil {
@@ -932,6 +952,8 @@ public final class AppModel {
         markReadIfSeen()
         markThreadReadIfSeen()
         (sessionOwner ?? self).tellAttention()
+        // Coming to the front is an act of the person's own (D-143).
+        noteActivity()
         if active { Task { await checkSession() } }
     }
 

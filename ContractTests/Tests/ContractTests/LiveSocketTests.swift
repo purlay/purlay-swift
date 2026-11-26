@@ -62,6 +62,27 @@ struct LiveSocketTests {
         #expect(await live.until { live.messages.contains { $0.id == id } })
     }
 
+    @Test("the word that the person is here is taken: the socket stays open and still carries a message")
+    func saysActive() async throws {
+        let (world, _, _, live) = try setup()
+        let channelID = try #require(world.channels["api"])
+        let channel = try #require(Uuid(channelID))
+        let workspace = try #require(Uuid(world.workspaceID))
+        live.connection.watch(channelID)
+        live.connection.start()
+        defer { live.connection.stop() }
+        #expect(await live.until { live.subscribed })
+
+        #expect(live.connection.send(.active(ActiveFrame(id: live.ids.next(), payload: .init(workspaceId: workspace)))))
+        let id = live.ids.next()
+        let frame = ClientFrame.messageSend(
+            MessageSendFrame(id: id, payload: .init(channelId: channel, content: "after the word that I am here")))
+        #expect(live.connection.send(frame))
+        #expect(await live.until { live.acks.contains(id) }, "a malformed word would have ended the connection")
+        #expect(live.connection.status == .open)
+        #expect(live.refusals.isEmpty)
+    }
+
     @Test("what was written while the socket was down arrives after it comes back, from the cursor")
     func replay() async throws {
         let (world, persona, api, live) = try setup()

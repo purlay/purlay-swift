@@ -77,7 +77,7 @@ extension AppModel {
     }
 
     /// Whether this workspace has chat, the module this app is made for.
-    public var chatAvailable: Bool { me == nil || hasModule(.chat) }
+    public var chatAvailable: Bool { !chatRouteUnavailable && hasModule(.chat) }
 }
 
 /// The part of a member's profile worth showing next to a message, with what has expired left out.
