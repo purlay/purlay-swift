@@ -114,6 +114,18 @@ struct OpenConversationLinkTests {
         #expect(desktop.active === first && first.phase == .ready)
     }
 
+    @Test("a conversation link in a workspace without chat says chat is off and asks the server for nothing")
+    func chatOff() async throws {
+        let h = ModelHarness()
+        try h.rememberedSession()
+        h.server.edit { $0.modules = [] }
+        let desktop = desktop(h)
+        await desktop.launch()
+        await desktop.openLink(url(channel: 1))
+        #expect(desktop.linkProblem == .chatUnavailable)
+        #expect(!h.server.requests.contains { $0.url.path.contains("/messages") })
+    }
+
     @Test("unknown workspaces, inaccessible channels, and message/channel mismatches fail visibly")
     func accessBoundary() async throws {
         let h = ModelHarness()

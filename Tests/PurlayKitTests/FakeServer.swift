@@ -56,6 +56,9 @@ final class FakeServer: HTTPTransport {
         var inboxEntries: [InboxEntry] = []
         var inboxStatus = 200
         var awayChosen = false
+        /// Who the presence snapshot says is here: each person's id, whether they are away, and the version.
+        var presence: [(user: String, away: Bool, version: Int)] = []
+        var presenceStatus = 200
         var issues: [PurlayContract.Issue] = []
         var issuesStatus = 200
         var issuesPageSize: Int?
@@ -395,6 +398,9 @@ final class FakeServer: HTTPTransport {
                     modules: snapshot.modules, workspaceModules: snapshot.workspaceModules, profile: snapshot.profile))
         case ("GET", "/api/workspaces/\(Self.workspaceID)/channels"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            if snapshot.channelsStatus == 404 {
+                return json(404, #"{"error":{"code":"ROUTE_NOT_FOUND","message":"No such route.","details":{}}}"#)
+            }
             return json(snapshot.channelsStatus, "[\(snapshot.chans.map(Self.json).joined(separator: ","))]")
         case ("GET", "/api/workspaces/\(Self.workspaceID)/members"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
@@ -856,6 +862,15 @@ final class FakeServer: HTTPTransport {
             let body = request.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             let url = body?["url"] as? String ?? ""
             return json(200, snapshot.linkPreviews[url] ?? "null")
+        case ("GET", "/api/workspaces/\(Self.workspaceID)/presence"):
+            guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            if snapshot.presenceStatus != 200 {
+                return json(snapshot.presenceStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+            }
+            let online = snapshot.presence.map {
+                "{\"userId\":\"\($0.user)\",\"online\":true,\"away\":\($0.away),\"version\":\($0.version)}"
+            }
+            return json(200, "{\"online\":[\(online.joined(separator: ","))],\"version\":1}")
         case ("PUT", "/api/me/away"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
             if snapshot.awayStatus != 200 {
