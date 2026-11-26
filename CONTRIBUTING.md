@@ -11,12 +11,15 @@ engine. See [`docs/architecture/overview.md`](docs/architecture/overview.md) for
 ## Before you push
 
 ```sh
-scripts/verify
+make verify            # what a pull request needs
+make verify-security   # no secret in the history
 ```
 
-It checks, in order: the branch name; that shared files are their owners' copies; the architecture rules (each also run
+`make verify` checks, in order: the branch name; that shared files are their owners' copies; the architecture rules (each also run
 against a copy with the violation planted); that the contract bundle is the one `Contract/contract.lock` pins and that
 `Sources/*/Generated` is exactly what it generates; the generator's tests; format; the tests; and a build for iOS 18 and later.
+`make verify-security` scans the whole history with gitleaks. `scripts/verify` with no argument runs every lane, as a release does;
+`make setup` fetches the pinned contract bundle and the scanner. The bundle is needed before the first run.
 
 ## Generated code
 

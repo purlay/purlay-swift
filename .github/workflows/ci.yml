@@ -28,6 +28,18 @@ jobs:
           BRANCH: ${{ github.head_ref || github.ref_name }}
           GITHUB_TOKEN: ${{ github.token }}
 
+  security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, which is what is scanned.
+          fetch-depth: 0
+      - run: scripts/install-gitleaks
+      - name: No secret in the history
+        run: scripts/verify security
+
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -169,11 +181,11 @@ jobs:
 
   verify:
     if: always()
-    needs: [rules, changes, generated, test-contract, test-kit, ios]
+    needs: [rules, security, changes, generated, test-contract, test-kit, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
       - name: Every lane passed
         run: |
           echo '${{ toJSON(needs) }}'
-          test "${{ needs.rules.result == 'success' && needs.changes.result == 'success' && (needs.generated.result == 'success' || (needs.changes.outputs.code == 'false' && needs.generated.result == 'skipped')) && (needs.test-contract.result == 'success' || (needs.changes.outputs.code == 'false' && needs.test-contract.result == 'skipped')) && (needs.test-kit.result == 'success' || (needs.changes.outputs.code == 'false' && needs.test-kit.result == 'skipped')) && (needs.ios.result == 'success' || (needs.changes.outputs.code == 'false' && needs.ios.result == 'skipped')) }}" = "true"
+          test "${{ needs.rules.result == 'success' && needs.security.result == 'success' && needs.changes.result == 'success' && (needs.generated.result == 'success' || (needs.changes.outputs.code == 'false' && needs.generated.result == 'skipped')) && (needs.test-contract.result == 'success' || (needs.changes.outputs.code == 'false' && needs.test-contract.result == 'skipped')) && (needs.test-kit.result == 'success' || (needs.changes.outputs.code == 'false' && needs.test-kit.result == 'skipped')) && (needs.ios.result == 'success' || (needs.changes.outputs.code == 'false' && needs.ios.result == 'skipped')) }}" = "true"

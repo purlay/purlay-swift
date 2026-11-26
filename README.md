@@ -24,7 +24,7 @@ Platforms: macOS 26 and later (built for 27), iOS 18 and later (built for 27).
 ## Using it
 
 ```swift
-.package(url: "https://github.com/purlay/purlay-swift", from: "0.1.0")
+.package(url: "https://github.com/purlay/purlay-swift", from: "0.2.0")
 ```
 
 An app pins one version, and that version pins one server contract (`Contract/contract.lock`). The server's
@@ -34,8 +34,10 @@ server's minimum.
 ## Developing
 
 ```sh
-scripts/verify          # rules, contract pin, generated code, format, tests, iOS build
-swift test
+make setup              # the pinned contract bundle and the secret scanner (network)
+make verify             # rules, contract pin, generated code, format, tests, iOS build
+make verify-security    # no secret in the history
+swift test              # the package's tests
 ```
 
 Generated code (`Sources/*/Generated`) is never edited by hand: `scripts/contract` pins a bundle from the server,
@@ -46,8 +48,10 @@ Generated code (`Sources/*/Generated`) is never edited by hand: `scripts/contrac
 
 | Folder | Holds |
 |---|---|
-| [`docs/architecture/`](docs/architecture) | What lives here, what must not, and how apps consume it |
-| [`docs/development/`](docs/development) | The contract pipeline, releasing |
+| [`docs/README.md`](docs/README.md) | The map: current status, constraints, how to verify |
+| [`docs/product/`](docs/product) | Vision and requirements, each tied to a test |
+| [`docs/architecture/`](docs/architecture) | What lives here, what must not, conventions, technical debt |
+| [`docs/development/`](docs/development) | The contract pipeline, CI, releasing |
 | [`docs/decisions/`](docs/decisions) | Decision records |
 
 ## License
