@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Native browser sign-in sends the app platform so the server can name Purlay for Mac or Purlay for iOS (D-191).
+
 ## 0.2.0 — 2026-11-26
 
 - `AppModel.noteActivity()` and `Engine.announceActive(workspace:)`: the app tells the server over the socket that the person
