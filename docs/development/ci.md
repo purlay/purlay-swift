@@ -12,12 +12,12 @@ that says how and why; each repository's `CONTRIBUTING.md` says only what is spe
 ## How
 
 **One script, in lanes.** `scripts/verify` takes a lane; CI runs the lanes as separate jobs side by side, and a person runs them all
-(`scripts/verify`). The jobs' names are lanes, not steps: `rules`, `generated`, `test` (or `test-contract` and `test-kit`), `build`,
-`packages`, `app`, `ios`, `simulator`, as each repository has them. One job, `verify`, depends on all of them and is the single check a pull request needs
+(`make verify` for what a pull request needs, `make verify-all` for every lane; `scripts/verify <lane>` runs one). The jobs' names are lanes, not steps: `rules`, `security`, `generated`,
+`test` (or `test-contract` and `test-kit`), `build`, `packages`, `app`, `ios`, `simulator`, as each repository has them. One job, `verify`, depends on all of them and is the single check a pull request needs
 (the branch protection asks for it by name).
 
-**Cheap work on a cheap runner.** `rules` (branch name, shared files, architecture rules and their demonstration) needs no Swift and
-runs on Linux, where a job starts in seconds. Everything that compiles runs on the Xcode 27 runner.
+**Cheap work on a cheap runner.** `rules` (branch name, shared files, architecture rules and their demonstration) and `security` (below) need no Swift and
+run on Linux, where a job starts in seconds. Everything that compiles runs on the Xcode 27 runner.
 
 **A compilation cache that survives a fresh checkout.** A hosted runner is clean every time, and compiling `PurlayContract` and
 `PurlayKit` from nothing took minutes, several times per run. Xcode's compilation cache is content-addressed
@@ -43,9 +43,14 @@ changes the app itself, and always on `main`, on the schedule and for a release.
 other event (`main`, the schedule) and any file that is not a document run every lane, so `main` always saves the caches.
 
 **Tools are installed from their releases, pinned and checked.** `brew install xcodegen` took 9 to 17 s of every job that needed it (it updates
-Homebrew and pours a bottle). `scripts/install-xcodegen`, owned here and copied to the apps, downloads the pinned release, checks its digest, and
+Homebrew and pours a bottle). `scripts/install-xcodegen`, owned here and copied to the apps (this repository has no XcodeGen project and does not run it), downloads the pinned release, checks its digest, and
 puts it on the `PATH` of the steps that follow: 1 s in the apps' runs (measured). It installs nothing when the pinned version is already there, and a digest that is not
-the pinned one fails and leaves nothing behind. To move to a newer version change the version and the digest the release page shows.
+the pinned one fails and leaves nothing behind. To move to a newer version change the version and the digest the release page shows; the same holds for `scripts/install-gitleaks`, which has three digests (Linux, macOS on Apple silicon and Intel).
+
+**No secret in the history.** `security` runs gitleaks over the whole history (`fetch-depth: 0`), installed by `scripts/install-gitleaks` the same
+way (pinned version, a digest per platform). It runs for every event, including a pull request that changes only documents, and `verify` requires it
+and does not accept it skipped. A release verifies with the full history, so it does not publish past a failed scan
+([decision 0003](../decisions/0003-verify-entry-point-and-secret-scan.md)).
 
 **Releases are rehearsed.** Release tags are immutable, so the release workflow can be run by hand from a branch
 (*Actions → Release → Run workflow*): it runs every lane on the release's machine and publishes nothing. The first rehearsal of
@@ -66,6 +71,9 @@ repository was holding the runners.
 | a pull request that changes only documents | the same as any other | | **15 s** (`purlay-swift` #13: `rules` and `changes` ran, the four compiling lanes were skipped, `verify` passed) |
 
 The jobs of a run start together, so a pull request takes as long as its slowest job, plus the time it waits for a runner.
+
+The table was measured before the `security` job existed. That job is a checkout, an 8 MB download and a scan (0.2 s over 22 commits on a developer machine) on the
+Linux runner; its time on a hosted runner has not been measured yet ([tech debt](../architecture/tech-debt.md), TD-004).
 
 ### Where the time goes, and what does not help
 

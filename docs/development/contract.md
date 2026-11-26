@@ -5,6 +5,7 @@ version, contract version, bundle format, manifest digest) and the generator tha
 Swift.
 
 ```sh
+scripts/prepare-contract       # the bundle the lock names, from the server's release (also `make setup`); a no-op when it is already there
 scripts/contract use DIR       # take a bundle from `bun run contract:bundle --out DIR` in a server checkout
 scripts/contract fetch TAG     # or from a server release, after checking its digest
 scripts/contract verify        # Contract/bundle is exactly what the lock names
@@ -18,5 +19,5 @@ compiler and the tests show, and release a new version of this package.
 
 ## Releasing
 
-Semantic versions. A change to generated code from a new contract is at least a minor; a change that breaks an app's
-use of the Kit is a major. Tag `vX.Y.Z` on `main` after `scripts/verify` passes; apps move their pin deliberately.
+A change to generated code from a new contract is at least a minor; a change that breaks an app's use of the Kit is a major.
+The steps are in [releasing.md](releasing.md); apps move their pin deliberately.

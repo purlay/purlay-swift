@@ -1,0 +1,8 @@
+# Technical debt
+
+| ID | Debt | Impact | Repayment condition | Owner | Below the floor? |
+|---|---|---|---|---|---|
+| TD-001 | The live-server contract tests (`ContractTests/`, `scripts/contract-test`) are not in CI: they need a checkout of the server with its web client built, `bun` and a database. They run by hand before a release that moves the contract pin. | Medium: a client/server disagreement that the bundle's fixtures cannot show (sign-in, socket, replay against a real server) is found late, by whoever runs them. | When the server publishes its demo as an image or a release asset that a job can start without a checkout, or when a release is cut more than once a month. | maintainer | no |
+| TD-002 | Nothing checks a public API change against the last release, so "major" is decided by the author's reading (`swift package diagnose-api-breaking-changes` exists and is not run). | Medium: an app's build breaks on a minor bump. | Before the first `1.0.0`, or when a third consumer appears. | maintainer | no |
+| TD-003 | Kit names still carry the Mac app's words: `DesktopSessions`, `LoginItemStatus`, "Dock badge" in the `AttentionPresenter` comment. The iOS app has no Dock and no login item. | Low: confusing, not wrong; a rename is a major version. | The next major release, or when the iOS app needs the same concept under another name. | maintainer | no |
+| TD-004 | The `security` job and the CI times in [ci.md](../development/ci.md) were measured on a developer machine (the scan, 0.2 s over 22 commits), not yet on a hosted runner. | Low | After the first hosted run of the change that added it: put the measured time in `ci.md`. | maintainer | no |
