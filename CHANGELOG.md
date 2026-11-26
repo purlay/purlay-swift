@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-26
+
 - `AppModel.noteActivity()` and `Engine.announceActive(workspace:)`: the app tells the server over the socket that the person
   is using it (`ACTIVE`, at most once a minute per workspace, at once after a reconnect), so a person at the keyboard is not
   shown as away after five minutes (D-143, D-257). Who is here is also read whole at the start and after a reconnect.
