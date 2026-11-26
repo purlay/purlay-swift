@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 BUNDLE=Contract/bundle
 LOCK=Contract/contract.lock
-REPOSITORY="${PURLAY_SERVER_REPOSITORY:-doancan/purlay}"
+REPOSITORY="${PURLAY_SERVER_REPOSITORY:-purlay/purlay}"
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
