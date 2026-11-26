@@ -24,7 +24,7 @@ Platforms: macOS 26 and later (built for 27), iOS 18 and later (built for 27).
 ## Using it
 
 ```swift
-.package(url: "https://github.com/purlay/purlay-swift", from: "0.1.0")
+.package(url: "https://github.com/purlay/purlay-swift", from: "0.2.0")
 ```
 
 An app pins one version, and that version pins one server contract (`Contract/contract.lock`). The server's
