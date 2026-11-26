@@ -37,12 +37,17 @@ public struct SignInAttempt: Sendable, Equatable {
             .replacingOccurrences(of: "=", with: "")
     }
 
-    /// Where the browser is sent: the server's own page, with the challenge and the state and nothing that is secret.
+    /// The server's sign-in page for a Mac app, with the challenge and state.
     public func authorizationURL(on origin: ServerAddress) -> URL? {
+        authorizationURL(on: origin, platform: .macOS)
+    }
+
+    func authorizationURL(on origin: ServerAddress, platform: ClientPlatform) -> URL? {
         var components = URLComponents(url: origin.origin, resolvingAgainstBaseURL: false)
         components?.path = "/sign-in/native"
         components?.queryItems = [
             URLQueryItem(name: "challenge", value: challenge), URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "platform", value: platform.rawValue),
         ]
         return components?.url
     }
