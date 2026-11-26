@@ -18,6 +18,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # `scripts/verify` ends with the secret scan, and it reads the whole history: a release does not publish unless it passed.
+          fetch-depth: 0
       - name: The tag has release notes
         if: startsWith(github.ref, 'refs/tags/v')
         run: scripts/release-notes "${GITHUB_REF_NAME#v}" > /dev/null
