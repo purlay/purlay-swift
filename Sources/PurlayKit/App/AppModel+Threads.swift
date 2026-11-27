@@ -132,37 +132,53 @@ extension AppModel {
     public func reopenThread() async -> Bool { await changeResolution(resolved: false) }
 
     private func changeResolution(resolved: Bool) async -> Bool {
-        guard let api, let thread else { return false }
+        guard !Task.isCancelled, let api, let thread else { return false }
+        let session = contextGeneration
+        let generation = threadGeneration
         do {
             let updated =
                 resolved
                 ? try await api.resolveThread(messageId: thread.root.value)
                 : try await api.reopenThread(messageId: thread.root.value)
+            guard session == contextGeneration, !Task.isCancelled else { return false }
             engine?.revise(thread.root, in: thread.channel) { $0.thread = updated.thread }
-            threadRootCopy?.thread = updated.thread
+            if generation == threadGeneration { threadRootCopy?.thread = updated.thread }
             sync()
             return true
         } catch {
-            say(.resolveFailed)
+            guard session == contextGeneration, generation == threadGeneration, !TransportError.isCancellation(error)
+            else { return false }
+            if (error as? APIError)?.isMissingRoute == true {
+                closeThread()
+            } else {
+                say(.resolveFailed)
+            }
             return false
         }
     }
 
     /// Follows or lets go of the open thread: painted at once, put back with a word if the server refuses.
     public func setFollowing(_ following: Bool) async {
-        guard let api, let thread else { return }
+        guard !Task.isCancelled, let api, let thread else { return }
+        let session = contextGeneration
         let generation = threadGeneration
         let before = threadFollow
         if case .known = before { threadFollow = .known(following) }
         do {
             let answer = try await api.setThreadFollow(
                 messageId: thread.root.value, body: SetThreadFollowRequest(following: following))
-            guard generation == threadGeneration else { return }
+            guard session == contextGeneration, generation == threadGeneration else { return }
+            try Task.checkCancellation()
             threadFollow = .known(answer.following)
         } catch {
-            guard generation == threadGeneration else { return }
+            guard session == contextGeneration, generation == threadGeneration else { return }
             threadFollow = before
-            say(.followFailed)
+            guard !TransportError.isCancellation(error) else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                closeThread()
+            } else {
+                say(.followFailed)
+            }
         }
     }
 }

@@ -117,6 +117,8 @@ final class FakeServer: HTTPTransport {
         var threadErrorCode = "INTERNAL"
         var threadErrorOnCursor = false
         var beforeThreadResponse: (@Sendable () async -> Void)?
+        var threadWriteError: (status: Int, code: String)?
+        var beforeThreadWriteResponse: (@Sendable () async -> Void)?
         var messagesStatus = 200
         var messagesErrorCode = "INTERNAL"
         var threadDelays: [String: Int] = [:]
@@ -487,6 +489,10 @@ final class FakeServer: HTTPTransport {
             return json(200, "{\"following\":\(snapshot.follows[id] ?? false)}")
         case ("PUT", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/follow"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeThreadWriteResponse?()
+            if let failure = snapshot.threadWriteError {
+                return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
+            }
             if snapshot.mutationStatus != 200 {
                 return json(snapshot.mutationStatus, #"{"error":{"code":"FORBIDDEN","message":"x"}}"#)
             }
@@ -498,6 +504,10 @@ final class FakeServer: HTTPTransport {
         case ("POST", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/resolve"),
             ("DELETE", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/resolve"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeThreadWriteResponse?()
+            if let failure = snapshot.threadWriteError {
+                return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
+            }
             if snapshot.mutationStatus != 200 {
                 return json(snapshot.mutationStatus, #"{"error":{"code":"FORBIDDEN","message":"x"}}"#)
             }
