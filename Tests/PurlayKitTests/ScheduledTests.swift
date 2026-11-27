@@ -104,6 +104,35 @@ struct ScheduledTests {
         #expect(h.model.scheduledItems.map(\.id) == [id])
     }
 
+    @Test("an editor opened during a Scheduled refresh can keep its page and item")
+    func keepEditingAfterClosedRoute() async throws {
+        let h = await opened()
+        let item = Uuid(UUID())
+        try await h.model.scheduleDraft(
+            id: item, text: "Later", channel: Uuid(channel(1))!, parent: nil, at: date)
+        h.model.scheduledOpen = true
+        let response = Gate()
+        h.server.edit {
+            $0.scheduledError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeScheduledResponse = { await response.wait() }
+        }
+        var editorOpen = false
+        let reading = Task { await h.model.loadScheduled(dismissOnUnavailable: { !editorOpen }) }
+        #expect(
+            await eventually {
+                h.server.requests.contains { $0.method == "GET" && $0.url.path.hasSuffix("/scheduled") }
+            })
+
+        editorOpen = true
+        await response.open()
+        await reading.value
+
+        #expect(h.model.scheduledOpen)
+        #expect(h.model.scheduledItems.map(\.id) == [item])
+        #expect(!h.model.scheduledFailed)
+        #expect(!h.model.scheduledLoading)
+    }
+
     @Test("a missing workspace still reports a Scheduled read failure")
     func missingWorkspace() async {
         let h = await opened()
