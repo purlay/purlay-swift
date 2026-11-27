@@ -51,7 +51,7 @@ public actor SessionManager {
     private let owner: any OwnerMemory
     private let wipers: [any UserDataWiper]
     private let now: @Sendable () -> Date
-    private let endSession: @Sendable (SignOutScope) async throws -> Void
+    private let endSession: @Sendable (SignOutScope, StoredSession, SessionManager) async throws -> Void
 
     public private(set) var state: State = .signedOut(nil)
     private var continuations: [UUID: AsyncStream<State>.Continuation] = [:]
@@ -61,11 +61,21 @@ public actor SessionManager {
         now: @escaping @Sendable () -> Date = Date.init,
         endSession: @escaping @Sendable (SignOutScope) async throws -> Void
     ) {
+        self.init(store: store, owner: owner, wipers: wipers, now: now) { scope, _, _ in
+            try await endSession(scope)
+        }
+    }
+
+    init(
+        store: any SessionStore, owner: any OwnerMemory, wipers: [any UserDataWiper],
+        now: @escaping @Sendable () -> Date,
+        endSignedInSession: @escaping @Sendable (SignOutScope, StoredSession, SessionManager) async throws -> Void
+    ) {
         self.store = store
         self.owner = owner
         self.wipers = wipers
         self.now = now
-        self.endSession = endSession
+        self.endSession = endSignedInSession
     }
 
     /// The session value to send as the cookie, or none.
@@ -112,7 +122,7 @@ public actor SessionManager {
             return state
         }
         if let end = session.expiresAt, end <= now() {
-            try? store.delete(for: server)
+            _ = try? store.delete(ifMatching: session, for: server)
             move(to: .signedOut(.expired))
         } else {
             move(to: .signedIn(session, server: server))
@@ -138,23 +148,38 @@ public actor SessionManager {
     /// The server ended the session. Nothing the person made is removed: the draft and the outbox wait for the next
     /// sign-in, which is the same person's or is found out by `identify`.
     public func sessionEndedByServer() {
-        guard case .signedIn(_, let server) = state else { return }
-        try? store.delete(for: server)
+        guard case .signedIn(let session, let server) = state else { return }
+        sessionEndedByServer(matching: session.cookie, for: server)
+    }
+
+    /// Retires only the credential that received the server's terminal signal. No logout is sent.
+    @discardableResult
+    func sessionEndedByServer(matching cookie: String, for server: ServerAddress) -> Bool {
+        guard case .signedIn(let session, let current) = state, current == server, session.cookie == cookie else {
+            return false
+        }
+        do {
+            _ = try store.delete(ifMatching: session, for: server)
+        } catch {
+            Log.session.error("the ended session could not be removed from this device")
+        }
         move(to: .signedOut(.endedByServer))
+        return true
     }
 
     /// The session's time passed while the app ran.
     public func checkExpiry() {
         guard case .signedIn(let session, let server) = state, let end = session.expiresAt, end <= now() else { return }
-        try? store.delete(for: server)
+        _ = try? store.delete(ifMatching: session, for: server)
         move(to: .signedOut(.expired))
     }
 
     public func signOut(_ scope: SignOutScope) async -> SignOutResult {
-        guard case .signedIn(_, let server) = state else { return .done }
+        let starting = state
+        guard case .signedIn(let session, let server) = starting else { return .done }
         var told = true
         do {
-            try await endSession(scope)
+            try await endSession(scope, session, self)
         } catch {
             if scope == .everywhere {
                 // The person asked for every session to end and none did: the app does not pretend it did.
@@ -162,17 +187,34 @@ public actor SessionManager {
             }
             told = false
         }
+        let result: SignOutResult = told ? .done : .serverNotTold
+        guard state == starting else { return result }
+        let ended: State = .signedOut(scope == .everywhere ? .signedOutEverywhere : .signedOutByPerson)
         // The credential first: whatever fails after, it is no longer here. One that cannot be removed is harmless only
         // if the server ended it; otherwise the app stops here rather than say "signed out" over a session that lives.
         do {
-            try store.delete(for: server)
+            if try !store.delete(ifMatching: session, for: server), let kept = try store.load(for: server) {
+                if kept != session {
+                    move(to: ended)
+                    return result
+                }
+                if !told { return .credentialKept }
+            }
         } catch {
             Log.session.error("the sign-in could not be removed: \(String(describing: error), privacy: .public)")
             if !told { return .credentialKept }
         }
-        for wiper in wipers { await wiper.wipe() }
+        for wiper in wipers {
+            guard state == starting else { return result }
+            await wiper.wipe()
+        }
+        guard state == starting else { return result }
+        if let kept = try? store.load(for: server), kept != session {
+            move(to: ended)
+            return result
+        }
         owner.save(nil)
-        move(to: .signedOut(scope == .everywhere ? .signedOutEverywhere : .signedOutByPerson))
-        return told ? .done : .serverNotTold
+        move(to: ended)
+        return result
     }
 }

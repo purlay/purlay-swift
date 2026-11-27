@@ -101,7 +101,11 @@ public final class AppModel {
         didSet { onPhaseChange?() }
     }
     @ObservationIgnored var onPhaseChange: (() -> Void)?
-    @ObservationIgnored var onSessionEnded: (() -> Void)?
+    struct SessionScope: Equatable {
+        let origin: ServerAddress
+        let cookie: String
+    }
+    @ObservationIgnored var onSessionEnded: ((SessionScope?) -> Void)?
     private let preferredWorkspaceID: Uuid?
     public private(set) var server: ServerAddress?
     public private(set) var serverInfo: ClientInfo?
@@ -569,24 +573,23 @@ public final class AppModel {
     // MARK: The session
 
     private func makeManager(for address: ServerAddress) -> SessionManager {
-        let client = environment.transport
-        let version = environment.appVersion
+        let transport = environment.transport
+        let sleep = environment.sleep
+        let header = ClientHeader.value(appVersion: environment.appVersion, platform: environment.platform)
         return SessionManager(
             store: environment.sessions, owner: environment.owner, wipers: [], now: environment.clock,
-            endSession: { [weak self] scope in
-                guard let self else { return }
-                try await self.endServerSession(scope, client: client, version: version, address: address)
+            endSignedInSession: { [weak self] scope, session, manager in
+                let configuration = APIConfiguration(
+                    baseURL: address.origin, clientHeader: header,
+                    sessionCookie: { await manager.cookie == session.cookie ? session.cookie : nil },
+                    onSessionRejected: { await manager.sessionEndedByServer(matching: session.cookie, for: address) },
+                    onProblem: { [weak self] problem in await self?.recordProblem(problem) })
+                let api = PurlayAPI(client: APIClient(configuration: configuration, transport: transport, sleep: sleep))
+                switch scope {
+                case .thisDevice: try await api.logout()
+                case .everywhere: try await api.logoutEverywhere()
+                }
             })
-    }
-
-    private func endServerSession(
-        _ scope: SignOutScope, client: any HTTPTransport, version: SemanticVersion, address: ServerAddress
-    ) async throws {
-        guard let api else { throw TransportError.noSession }
-        switch scope {
-        case .thisDevice: try await api.logout()
-        case .everywhere: try await api.logoutEverywhere()
-        }
     }
 
     private func resumeOrAskToSignIn(_ address: ServerAddress) async {
@@ -597,7 +600,7 @@ public final class AppModel {
             if case .signedOut(.expired) = state { say(.sessionExpired) }
             if case .signedIn(let session, _) = state {
                 cookieCache = session.cookie
-                observe(manager)
+                observe(manager, cookie: session.cookie)
                 await bootstrap()
                 return
             }
@@ -624,7 +627,7 @@ public final class AppModel {
             await manager.adopt(session, for: server)
             cookieCache = session.cookie
             warnedOfExpiry = false
-            observe(manager)
+            observe(manager, cookie: session.cookie)
             await bootstrap()
         } catch {
             phase = .signedOut
@@ -632,17 +635,26 @@ public final class AppModel {
         }
     }
 
-    private func observe(_ manager: SessionManager) {
+    private func observe(_ manager: SessionManager, cookie: String) {
         observation?.cancel()
         observation = Task { @MainActor [weak self] in
             for await state in await manager.states() {
-                guard let self, !Task.isCancelled else { return }
-                if case .signedOut(let reason) = state, phase == .ready || phase == .loading { sessionEnded(reason) }
+                guard let self, !Task.isCancelled, self.manager === manager, cookieCache == cookie else { return }
+                if case .signedOut(let reason) = state, phase == .ready || phase == .loading {
+                    if hasActiveSignOut && (reason == .signedOutByPerson || reason == .signedOutEverywhere) { continue }
+                    sessionEnded(reason)
+                }
             }
         }
     }
 
+    var sessionScope: SessionScope? {
+        guard let origin, let cookieCache else { return nil }
+        return SessionScope(origin: origin, cookie: cookieCache)
+    }
+
     private func sessionEnded(_ reason: SessionManager.Reason?) {
+        let ended = sessionScope
         tearDown()
         phase = .signedOut
         switch reason {
@@ -650,7 +662,7 @@ public final class AppModel {
         case .endedByServer: say(.sessionEndedByServer)
         case .signedOutByPerson, .signedOutEverywhere, nil: break
         }
-        onSessionEnded?()
+        onSessionEnded?(ended)
     }
 
     /// Ends the session here, or everywhere. The result says whether the server was told.
@@ -658,10 +670,12 @@ public final class AppModel {
     public func signOut(_ scope: SignOutScope) async -> SessionManager.SignOutResult {
         if let sessionOwner { return await sessionOwner.signOut(scope) }
         guard let manager else { return .done }
+        let ended = sessionScope
         let context = contextGeneration
         signOutRequests[context, default: 0] += 1
         defer { finishSignOutRequest(context) }
         let result = await manager.signOut(scope)
+        guard self.manager === manager, contextGeneration == context, sessionScope == ended else { return result }
         switch result {
         case .done: break
         case .serverNotTold: say(.serverNotTold)
@@ -674,7 +688,7 @@ public final class AppModel {
         }
         tearDown()
         phase = .signedOut
-        onSessionEnded?()
+        onSessionEnded?(ended)
         return result
     }
 
@@ -702,15 +716,17 @@ public final class AppModel {
     // MARK: Signed in
 
     func bootstrap() async {
-        guard let server, let origin, let manager else { return }
+        guard let server, let origin, let manager, let cookie = cookieCache else { return }
         phase = .loading
         chatRouteUnavailable = false
         let context = contextGeneration
+        // Requests and terminal replies belong to the credential that opened this client.
         let client = APIClient(
             configuration: APIConfiguration(
                 baseURL: server.origin,
                 clientHeader: ClientHeader.value(appVersion: environment.appVersion, platform: environment.platform),
-                sessionCookie: { await manager.cookie }, onSessionRejected: { await manager.sessionEndedByServer() },
+                sessionCookie: { await manager.cookie == cookie ? cookie : nil },
+                onSessionRejected: { await manager.sessionEndedByServer(matching: cookie, for: server) },
                 onProblem: { [weak self] problem in await self?.recordProblem(problem) }),
             transport: environment.transport, sleep: environment.sleep)
         let api = PurlayAPI(client: client)
@@ -757,7 +773,8 @@ public final class AppModel {
                 return
             }
             guard context == contextGeneration else { return }
-            let engine = makeEngine(me: me, client: client, api: api, origin: origin, manager: manager)
+            let engine = makeEngine(
+                me: me, api: api, origin: origin, server: server, manager: manager, cookie: cookie)
             self.engine = engine
             let load = engine.restore()
             if load.unrestorable > 0 { say(.unrestorable(load.unrestorable)) }
@@ -796,7 +813,8 @@ public final class AppModel {
     }
 
     private func makeEngine(
-        me: MeResponse, client: APIClient, api: PurlayAPI, origin: ServerAddress, manager: SessionManager
+        me: MeResponse, api: PurlayAPI, origin: ServerAddress, server: ServerAddress, manager: SessionManager,
+        cookie: String
     ) -> Engine {
         let outbox: any OutboxStore =
             FileOutboxStore(base: environment.dataDirectory, userID: me.user.id.value, now: environment.clock)
@@ -808,10 +826,7 @@ public final class AppModel {
         return Engine(
             .init(
                 url: socketURL,
-                openSocket: { [weak self] url, handlers in
-                    // The session is read when a socket is opened: it may have changed since the engine was made.
-                    try opener(origin, self?.currentCookie() ?? "")(url, handlers)
-                },
+                openSocket: { url, handlers in try opener(origin, cookie)(url, handlers) },
                 schedule: environment.schedule, random: environment.random, clock: environment.clock,
                 serverClock: serverClock,
                 checkSession: {
@@ -830,8 +845,13 @@ public final class AppModel {
                     try await api.listMessages(channelId: channel.value, query: PageQuery(after: after))
                 },
                 refresh: { [weak self] refresh in self?.handle(refresh) },
-                onSessionEnded: { _ in Task { await session.sessionEndedByServer() } },
-                onRefused: { [weak self] status in self?.upgradeRefused(status) },
+                onSessionEnded: { _ in
+                    Task { await session.sessionEndedByServer(matching: cookie, for: server) }
+                },
+                onRefused: { [weak self] status in
+                    guard let self, self.manager === session, self.cookieCache == cookie else { return }
+                    self.upgradeRefused(status, cookie: cookie, for: server)
+                },
                 onLost: { [weak self] count in self?.say(.unsentLost(count)) },
                 onStorageProblem: { [weak self] _ in self?.say(.storageProblem) },
                 onChange: { [weak self] in self?.sync() }, onReply: { [weak self] reply in self?.receiveReply(reply) }))
@@ -844,12 +864,10 @@ public final class AppModel {
 
     private var cookieCache: String?
 
-    private func currentCookie() -> String? { cookieCache }
-
-    private func upgradeRefused(_ status: Int) {
+    private func upgradeRefused(_ status: Int, cookie: String, for server: ServerAddress) {
         switch status {
         case 401:
-            if let manager { Task { await manager.sessionEndedByServer() } }
+            if let manager { Task { await manager.sessionEndedByServer(matching: cookie, for: server) } }
         case 426:
             if let minimum = serverInfo?.minClient.macos {
                 tearDown()

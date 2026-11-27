@@ -12,6 +12,7 @@ final class FakeServer: HTTPTransport {
         var clientInfo = FakeServer.clientInfo()
         var infoStatus = 200
         var meStatus = 200
+        var beforeMeResponse: (@Sendable () async -> Void)?
         var profile = #"{"title":null,"timeZone":null,"status":null}"#
         var profileStatus = 200
         var tokenStatus = 204
@@ -417,6 +418,7 @@ final class FakeServer: HTTPTransport {
             return json(200, text)
         case ("GET", "/api/me"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeMeResponse?()
             return json(
                 snapshot.meStatus,
                 Self.meJSON(
