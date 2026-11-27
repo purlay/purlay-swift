@@ -127,6 +127,8 @@ final class FakeServer: HTTPTransport {
         var threadReads: [(root: String, read: String)] = []
         var follows: [String: Bool] = [:]
         var followStatus = 200
+        var followErrorCode: ErrorCode = .internal
+        var beforeFollowReadResponse: (@Sendable () async -> Void)?
         var workspaceMembers: [WorkspaceMember] = []
         var channelMembers: [String: [User]] = [:]
         var messages: [String: [Message]] = [:]
@@ -486,8 +488,10 @@ final class FakeServer: HTTPTransport {
             return HTTPResponse(status: 204)
         case ("GET", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/follow"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeFollowReadResponse?()
             if snapshot.followStatus != 200 {
-                return json(snapshot.followStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(
+                    snapshot.followStatus, #"{"error":{"code":"\#(snapshot.followErrorCode.rawValue)","message":"x"}}"#)
             }
             let id = String(path.dropFirst("/api/messages/".count).dropLast("/follow".count))
             return json(200, "{\"following\":\(snapshot.follows[id] ?? false)}")

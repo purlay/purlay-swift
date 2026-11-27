@@ -194,8 +194,11 @@ public final class AppModel {
     /// Channels whose newest messages could not be read, for the same reason.
     public internal(set) var channelLoadFailed: Set<Uuid> = []
     public internal(set) var threadFollow: FollowState = .reading
+    /// A rolling deployment may serve replies while a node temporarily refuses the follow route.
+    public internal(set) var threadFollowUnavailable = false
     var threadRootCopy: Message?
     var threadGeneration = 0
+    @ObservationIgnored var threadFollowReadGeneration: Int?
     var threadMarked: [Uuid: Uuid] = [:]
     /// Roots whose questions and decisions are being written: one write at a time each, since each carries the version it read.
     public internal(set) var knowledgeSaving: Set<Uuid> = []
