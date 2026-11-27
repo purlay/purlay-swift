@@ -24,6 +24,7 @@ final class FakeServer: HTTPTransport {
         var uploadError: (status: Int, code: String, remaining: Int?)?
         var uploadErrors: [String: (status: Int, code: String, remaining: Int?)] = [:]
         var uploadDelays: [String: Int] = [:]
+        var beforeUploadResponse: (@Sendable () async -> Void)?
         var attachmentData: [String: Data] = [:]
         var reminders: [MessageReminder] = []
         var reminderError: (status: Int, code: String)?
@@ -116,6 +117,7 @@ final class FakeServer: HTTPTransport {
         var olderDelay: Int?
         var reactionDelay: Int?
         var logoutStatus = 204
+        var beforeLogoutResponse: (@Sendable () async -> Void)?
         var online = true
         var sessionValid = true
         var readStatus = 200
@@ -979,6 +981,7 @@ final class FakeServer: HTTPTransport {
             let items = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let id = items.first { $0.name == "id" }?.value ?? ""
             let name = items.first { $0.name == "name" }?.value ?? ""
+            await snapshot.beforeUploadResponse?()
             if let wait = snapshot.uploadDelays[name] { try? await Task.sleep(for: .milliseconds(wait)) }
             if let failure = snapshot.uploadErrors[name] ?? snapshot.uploadError {
                 let details = failure.remaining.map { #","details":{"remainingBytes":\#($0)}"# } ?? ""
@@ -1156,6 +1159,7 @@ final class FakeServer: HTTPTransport {
             }
             return json(200, #"{"lastReadMessageId":"\#(id)","unreadCount":0,"unreadMentionCount":0}"#)
         case ("POST", "/auth/logout"), ("POST", "/auth/logout-all"):
+            await snapshot.beforeLogoutResponse?()
             if snapshot.logoutStatus == 204 { state.withLock { $0.sessionValid = false } }
             return HTTPResponse(status: snapshot.logoutStatus)
         default:

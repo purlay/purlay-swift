@@ -217,6 +217,11 @@ public final class DesktopSessions {
             guard let self, let session else { return }
             self.changed(session)
         }
+        // The credential is shared across workspaces, but their uploads and outboxes stay separate.
+        model.signOutPeers = { [weak self, weak model] in
+            guard let self, let model, let origin = model.origin, let user = model.me?.user.id else { return [] }
+            return self.sessions.map(\.model).filter { $0 !== model && $0.origin == origin && $0.me?.user.id == user }
+        }
         model.onSessionEnded = { [weak self, weak model, weak session] in
             guard let self, let model, let session else { return }
             if self.pendingLink?.server == model.origin || self.pendingLink?.server == model.server {

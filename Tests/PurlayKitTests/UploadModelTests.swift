@@ -298,14 +298,87 @@ struct UploadModelTests {
     @Test("signing out lets go of a waiting send and of the files: nothing goes afterwards")
     func signOutClears() async {
         let h = await opened()
-        h.server.edit { $0.uploadDelays["slow.txt"] = 120 }
+        let upload = Gate()
+        h.server.edit { $0.beforeUploadResponse = { await upload.wait() } }
         let slow = await inFlight(h, "slow.txt")
+        #expect(await eventually { !uploads(h).isEmpty })
         #expect(h.model.send("late"))
-        _ = await h.model.signOut(.thisDevice)
+        #expect(h.model.isWaiting(channel: one, parent: nil))
+        #expect(await h.model.signOut(.thisDevice) == .done)
+        await upload.open()
         await slow.value
-        try? await Task.sleep(for: .milliseconds(50))
         #expect(!h.model.isWaiting(channel: one, parent: nil))
+        #expect(h.model.uploads(channel: one, parent: nil).isEmpty)
         #expect(messageFrames(h).isEmpty)
+    }
+
+    @Test("a file that finishes before sign-out does not hold a send made while signed in")
+    func completedUploadMaySendBeforeSignOut() async {
+        let h = await opened()
+        await h.model.attach([file("ready.txt")], channel: one, parent: nil)
+        #expect(h.model.send("ready before logout"))
+        #expect(messageFrames(h).count == 1)
+        #expect(await h.model.signOut(.thisDevice) == .done)
+        #expect(messageFrames(h).count == 1)
+    }
+
+    @Test("an upload that finishes while sign-out is awaiting the server cannot send")
+    func signOutHoldsCompletedUpload() async {
+        let h = await opened()
+        let upload = Gate()
+        let logout = Gate()
+        h.server.edit {
+            $0.beforeUploadResponse = { await upload.wait() }
+            $0.beforeLogoutResponse = { await logout.wait() }
+        }
+        let slow = await inFlight(h, "slow.txt")
+        #expect(await eventually { !uploads(h).isEmpty })
+        #expect(h.model.send("waited for the file"))
+        let signingOut = Task { await h.model.signOut(.thisDevice) }
+        #expect(await eventually { h.server.requests.contains { $0.url.path == "/auth/logout" } })
+        await upload.open()
+        await slow.value
+        #expect(h.model.isWaiting(channel: one, parent: nil))
+        #expect(h.model.uploads(channel: one, parent: nil).first?.state.isDone == true)
+        #expect(messageFrames(h).isEmpty)
+        await logout.open()
+        #expect(await signingOut.value == .done)
+        #expect(h.model.uploads(channel: one, parent: nil).isEmpty)
+        #expect(messageFrames(h).isEmpty)
+    }
+
+    @Test("a refused sign-out leaves a conversation window's waiting send with the signed-in account")
+    func refusedSignOutResumesConversationSend() async throws {
+        let h = await opened()
+        let request = try #require(h.model.conversationWindowRequest(for: one))
+        let window = try #require(await h.model.makeConversationWindow(request))
+        let upload = Gate()
+        let logout = Gate()
+        h.server.edit {
+            $0.beforeUploadResponse = { await upload.wait() }
+            $0.beforeLogoutResponse = { await logout.wait() }
+            $0.logoutStatus = 500
+        }
+        let slow = Task { await window.attach([file("slow.txt")], channel: one, parent: nil) }
+        #expect(await eventually { !uploads(h).isEmpty })
+        #expect(window.send("waiting in the conversation window"))
+        let signingOut = Task { await window.signOut(.everywhere) }
+        #expect(await eventually { h.server.requests.contains { $0.url.path == "/auth/logout-all" } })
+        #expect(!h.model.send("a new send during sign-out"))
+        await upload.open()
+        await slow.value
+        #expect(window.isWaiting(channel: one, parent: nil))
+        #expect(messageFrames(h).isEmpty)
+        await logout.open()
+        guard case .notDone = await signingOut.value else {
+            Issue.record("Expected the server to refuse sign-out")
+            return
+        }
+        #expect(h.model.phase == .ready && window.phase == .ready)
+        #expect(messageFrames(h).count == 1)
+        #expect(messageFrames(h).first?.contains("waiting in the conversation window") == true)
+        #expect(!window.isWaiting(channel: one, parent: nil))
+        #expect(window.uploads(channel: one, parent: nil).isEmpty)
     }
 
     @Test(

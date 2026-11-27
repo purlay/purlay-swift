@@ -133,6 +133,13 @@ public final class AppModel {
     var api: PurlayAPI?
     @ObservationIgnored weak var sessionOwner: AppModel?
     @ObservationIgnored private var conversationWindows: [WeakConversationModel] = []
+    @ObservationIgnored var signOutPeers: (() -> [AppModel])?
+    private var signOutRequests: [Int: Int] = [:]
+    private var hasActiveSignOut: Bool { signOutRequests[contextGeneration] != nil }
+    var isSigningOut: Bool {
+        let owner = sessionOwner ?? self
+        return owner.hasActiveSignOut || owner.signOutPeers?().contains(where: \.hasActiveSignOut) == true
+    }
     private var observation: Task<Void, Never>?
     private var noticeCounter = 0
     private var launched = false
@@ -648,6 +655,9 @@ public final class AppModel {
     public func signOut(_ scope: SignOutScope) async -> SessionManager.SignOutResult {
         if let sessionOwner { return await sessionOwner.signOut(scope) }
         guard let manager else { return .done }
+        let context = contextGeneration
+        signOutRequests[context, default: 0] += 1
+        defer { finishSignOutRequest(context) }
         let result = await manager.signOut(scope)
         switch result {
         case .done: break
@@ -663,6 +673,19 @@ public final class AppModel {
         phase = .signedOut
         onSessionEnded?()
         return result
+    }
+
+    private func finishSignOutRequest(_ context: Int) {
+        if let count = signOutRequests[context], count > 1 {
+            signOutRequests[context] = count - 1
+            return
+        }
+        signOutRequests[context] = nil
+        // When sign-out is refused, the current account can finish what it was waiting to send.
+        guard contextGeneration == context, phase == .ready, !isSigningOut else { return }
+        for owner in [self] + (signOutPeers?() ?? []) {
+            for model in [owner] + owner.liveConversationWindows { model.settleWaitingSends() }
+        }
     }
 
     /// Stops this workspace without revoking the shared server credential a second time.
