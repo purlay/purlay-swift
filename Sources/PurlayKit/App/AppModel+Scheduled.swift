@@ -93,8 +93,12 @@ extension AppModel {
         scheduledItems.sort { $0.sendAt < $1.sendAt }
     }
 
-    /// The dismissal decision is made when the request finishes, since an editor may open while it is in flight.
-    public func loadScheduled(dismissOnUnavailable: () -> Bool = { true }) async {
+    public func loadScheduled() async {
+        await refreshScheduled(isEditing: { false })
+    }
+
+    /// Checks whether an editor is open when the request finishes so an unavailable route can preserve the edit.
+    public func refreshScheduled(isEditing: () -> Bool) async {
         guard supportsScheduling, let api, let workspace else { return }
         scheduledGeneration += 1
         let generation = scheduledGeneration
@@ -112,7 +116,7 @@ extension AppModel {
                 !TransportError.isCancellation(error)
             else { return }
             if (error as? APIError)?.isMissingRoute == true {
-                if dismissOnUnavailable() {
+                if !isEditing() {
                     scheduledItems = []
                     scheduledOpen = false
                 }

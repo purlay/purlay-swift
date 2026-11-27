@@ -170,7 +170,8 @@ struct ScheduledTests {
         h.model.scheduledOpen = true
         h.server.edit { $0.scheduledError = (404, "ROUTE_NOT_FOUND") }
 
-        await h.model.loadScheduled()
+        let loadScheduled = h.model.loadScheduled
+        await loadScheduled()
 
         #expect(!h.model.scheduledOpen)
         #expect(h.model.scheduledItems.isEmpty)
@@ -200,7 +201,7 @@ struct ScheduledTests {
             $0.beforeScheduledResponse = { await response.wait() }
         }
         var editorOpen = false
-        let reading = Task { await h.model.loadScheduled(dismissOnUnavailable: { !editorOpen }) }
+        let reading = Task { await h.model.refreshScheduled(isEditing: { editorOpen }) }
         #expect(
             await eventually {
                 h.server.requests.contains { $0.method == "GET" && $0.url.path.hasSuffix("/scheduled") }
