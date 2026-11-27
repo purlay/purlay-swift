@@ -1,9 +1,9 @@
 import Foundation
 import PurlayContract
-import PurlayKit
 import Synchronization
 import Testing
 
+@testable import PurlayKit
 @testable import PurlayTestSupport
 
 @Suite("SessionManager")
@@ -52,6 +52,42 @@ struct SessionManagerTests {
     private func session(_ value: String = "v", ends: TimeInterval? = 3_600) -> StoredSession {
         StoredSession(
             cookie: value, expiresAt: ends.map { start.addingTimeInterval($0) }, origin: "https://chat.example.com")
+    }
+
+    @Test("an old actor retires its old session without deleting a newer session another actor restored")
+    func conditionalLocalEndAcrossActors() async throws {
+        let store = InMemorySessionStore()
+        let old = parts(store: store)
+        let fresh = parts(store: store)
+        let original = session("old")
+        let replacement = session("fresh")
+        try store.save(original, for: server)
+        try await old.manager.restore(for: server)
+        try store.save(replacement, for: server)
+        try await fresh.manager.restore(for: server)
+
+        #expect(await old.manager.sessionEndedByServer(matching: original.cookie, for: server))
+        #expect(await old.manager.state == .signedOut(.endedByServer))
+        #expect(await fresh.manager.state == .signedIn(replacement, server: server))
+        #expect(try store.load(for: server) == replacement)
+        #expect(old.calls.all.isEmpty)
+    }
+
+    @Test("a late signal from an old session cannot end an adopted replacement")
+    func conditionalLocalEndAfterAdoption() async throws {
+        let p = parts()
+        let original = session("old")
+        let replacement = session("fresh")
+        await p.manager.adopt(original, for: server)
+        try p.store.save(replacement, for: server)
+        await p.manager.adopt(replacement, for: server)
+
+        #expect(!(await p.manager.sessionEndedByServer(matching: original.cookie, for: server)))
+        #expect(await p.manager.state == .signedIn(replacement, server: server))
+        #expect(try p.store.load(for: server) == replacement)
+        #expect(await p.manager.sessionEndedByServer(matching: replacement.cookie, for: server))
+        #expect(try p.store.load(for: server) == nil)
+        #expect(p.calls.all.isEmpty)
     }
 
     // MARK: Starting

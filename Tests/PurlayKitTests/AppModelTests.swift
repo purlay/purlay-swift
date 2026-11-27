@@ -18,6 +18,16 @@ final class MemorySessions: SessionStore {
         if deletionRefused.withLock({ $0 }) { throw Refused() }
         state.withLock { $0[server.description] = nil }
     }
+
+    func delete(ifMatching session: StoredSession, for server: ServerAddress) throws -> Bool {
+        let refused = deletionRefused.withLock { $0 }
+        return try state.withLock {
+            guard $0[server.description] == session else { return false }
+            if refused { throw Refused() }
+            $0[server.description] = nil
+            return true
+        }
+    }
 }
 
 final class MemoryPreferences: PreferenceStore {

@@ -143,6 +143,21 @@ public actor SessionManager {
         move(to: .signedOut(.endedByServer))
     }
 
+    /// Retires only the credential that received the server's terminal signal. No logout is sent.
+    @discardableResult
+    func sessionEndedByServer(matching cookie: String, for server: ServerAddress) -> Bool {
+        guard case .signedIn(let session, let current) = state, current == server, session.cookie == cookie else {
+            return false
+        }
+        do {
+            _ = try store.delete(ifMatching: session, for: server)
+        } catch {
+            Log.session.error("the ended session could not be removed from this device")
+        }
+        move(to: .signedOut(.endedByServer))
+        return true
+    }
+
     /// The session's time passed while the app ran.
     public func checkExpiry() {
         guard case .signedIn(let session, let server) = state, let end = session.expiresAt, end <= now() else { return }
