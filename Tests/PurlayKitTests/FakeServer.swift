@@ -84,6 +84,7 @@ final class FakeServer: HTTPTransport {
         /// The person's own groups of channels (D-284), in the order the server lists them.
         var channelGroups: [ChannelGroup] = []
         var groupStatus = 200
+        var groupErrorCode: ErrorCode = .internal
         var awayStatus = 200
         var inboxReads: [MarkInboxReadRequest] = []
         var notificationsStatus = 200
@@ -780,7 +781,8 @@ final class FakeServer: HTTPTransport {
         case _ where path.hasPrefix("/api/workspaces/\(Self.workspaceID)/channel-groups"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
             if snapshot.groupStatus != 200 {
-                return json(snapshot.groupStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(
+                    snapshot.groupStatus, #"{"error":{"code":"\#(snapshot.groupErrorCode.rawValue)","message":"x"}}"#)
             }
             let id = path.split(separator: "/").count == 5 ? String(path.split(separator: "/")[4]) : nil
             let body = request.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }

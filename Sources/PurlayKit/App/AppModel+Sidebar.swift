@@ -41,7 +41,8 @@ extension AppModel {
                 cursor = page.nextCursor
             } while cursor != nil
         } catch {
-            return false
+            guard context == contextGeneration, !TransportError.isCancellation(error) else { return true }
+            return (error as? APIError)?.isMissingRoute == true
         }
         guard context == contextGeneration else { return true }
         // The server lists the newest first; the sidebar shows them in the order they were made.
