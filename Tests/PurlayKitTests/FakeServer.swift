@@ -47,6 +47,8 @@ final class FakeServer: HTTPTransport {
         var searchStatus = 200
         var searchErrorCode = "INTERNAL"
         var unresolvedStatus = 200
+        var unresolvedErrorCode = "INTERNAL"
+        var unresolvedGate: Gate?
         var unresolvedPageSize = 20
         var unresolvedDelay = 0
         var knowledgeDelay = 0
@@ -553,9 +555,12 @@ final class FakeServer: HTTPTransport {
             return json(200, Self.encoded(message))
         case ("GET", "/api/workspaces/\(Self.workspaceID)/unresolved"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.unresolvedGate?.wait()
             if snapshot.unresolvedDelay > 0 { try? await Task.sleep(for: .milliseconds(snapshot.unresolvedDelay)) }
             if snapshot.unresolvedStatus != 200 {
-                return json(snapshot.unresolvedStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(
+                    snapshot.unresolvedStatus,
+                    "{\"error\":{\"code\":\"\(snapshot.unresolvedErrorCode)\",\"message\":\"x\"}}")
             }
             let query = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let before = query.first { $0.name == "before" }?.value

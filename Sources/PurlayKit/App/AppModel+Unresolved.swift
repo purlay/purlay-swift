@@ -18,7 +18,7 @@ extension AppModel {
     }
 
     public func loadUnresolved() async {
-        guard let api, let workspace else { return }
+        guard unresolvedOpen, !Task.isCancelled, let api, let workspace else { return }
         unresolvedGeneration += 1
         let generation = unresolvedGeneration
         unresolvedItems = []
@@ -30,17 +30,19 @@ extension AppModel {
             let page = try await api.listUnresolved(
                 workspaceId: workspace.id.value,
                 query: unresolvedQuery())
-            guard generation == unresolvedGeneration else { return }
+            guard unresolvedOpen, generation == unresolvedGeneration else { return }
+            try Task.checkCancellation()
             unresolvedItems = page.data.filter { !isPersonallyDeleted($0.id) }
             unresolvedCursor = page.nextCursor
         } catch {
-            guard generation == unresolvedGeneration else { return }
-            unresolvedFailed = true
+            unresolvedReadFailed(error, generation: generation)
         }
     }
 
     public func loadMoreUnresolved() async {
-        guard let api, let workspace, let cursor = unresolvedCursor, !unresolvedLoading else { return }
+        guard unresolvedOpen, !Task.isCancelled, let api, let workspace, let cursor = unresolvedCursor,
+            !unresolvedLoading
+        else { return }
         let generation = unresolvedGeneration
         unresolvedLoading = true
         unresolvedFailed = false
@@ -49,13 +51,13 @@ extension AppModel {
             let page = try await api.listUnresolved(
                 workspaceId: workspace.id.value,
                 query: unresolvedQuery(before: cursor))
-            guard generation == unresolvedGeneration else { return }
+            guard unresolvedOpen, generation == unresolvedGeneration else { return }
+            try Task.checkCancellation()
             let held = Set(unresolvedItems.map(\.id))
             unresolvedItems += page.data.filter { !held.contains($0.id) && !isPersonallyDeleted($0.id) }
             unresolvedCursor = page.nextCursor
         } catch {
-            guard generation == unresolvedGeneration else { return }
-            unresolvedFailed = true
+            unresolvedReadFailed(error, generation: generation)
         }
     }
 
@@ -84,15 +86,30 @@ extension AppModel {
         }
     }
 
-    func clearUnresolved() {
+    private func unresolvedReadFailed(_ error: any Error, generation: Int) {
+        guard unresolvedOpen, generation == unresolvedGeneration, !TransportError.isCancellation(error) else {
+            return
+        }
+        if (error as? APIError)?.isMissingRoute == true {
+            dismissUnresolved()
+        } else {
+            unresolvedFailed = true
+        }
+    }
+
+    private func dismissUnresolved() {
         unresolvedGeneration += 1
         unresolvedOpen = false
         unresolvedItems = []
-        unresolvedChannelID = nil
-        unresolvedFilter = .all
         unresolvedCursor = nil
         unresolvedLoading = false
         unresolvedFailed = false
+    }
+
+    func clearUnresolved() {
+        dismissUnresolved()
+        unresolvedChannelID = nil
+        unresolvedFilter = .all
         unresolvedUpdating = []
     }
 }
