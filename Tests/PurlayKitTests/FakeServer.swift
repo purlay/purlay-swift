@@ -32,6 +32,7 @@ final class FakeServer: HTTPTransport {
         var scheduled: [ScheduledMessage] = []
         var scheduledError: (status: Int, code: String)?
         var scheduledDelay = 0
+        var beforeScheduledResponse: (@Sendable () async -> Void)?
         var saved: [String: String] = [:]
         var savedIdsStatus = 200
         var savedIdsErrorCode = "INTERNAL"
@@ -340,6 +341,7 @@ final class FakeServer: HTTPTransport {
         }
         if path.contains("/scheduled") {
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeScheduledResponse?()
             if snapshot.scheduledDelay > 0 { try await Task.sleep(for: .milliseconds(snapshot.scheduledDelay)) }
             if let error = snapshot.scheduledError {
                 return json(error.status, "{\"error\":{\"code\":\"\(error.code)\",\"message\":\"x\"}}")

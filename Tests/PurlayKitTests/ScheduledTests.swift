@@ -78,6 +78,66 @@ struct ScheduledTests {
         #expect(h.model.scheduledItems.count == 1)
     }
 
+    @Test("a node without the Scheduled route dismisses only that page, and the next open can load")
+    func closedRoute() async throws {
+        let h = await opened()
+        let conversation = Uuid(channel(1))!
+        let id = Uuid(UUID())
+        try await h.model.scheduleDraft(id: id, text: "Later", channel: conversation, parent: nil, at: date)
+        h.model.scheduledOpen = true
+        h.server.edit { $0.scheduledError = (404, "ROUTE_NOT_FOUND") }
+
+        await h.model.loadScheduled()
+
+        #expect(!h.model.scheduledOpen)
+        #expect(h.model.scheduledItems.isEmpty)
+        #expect(!h.model.scheduledLoading)
+        #expect(!h.model.scheduledFailed)
+        #expect(h.model.chatAvailable)
+        #expect(h.model.supportsScheduling)
+        #expect(h.model.me != nil)
+
+        h.server.edit { $0.scheduledError = nil }
+        h.model.scheduledOpen = true
+        await h.model.loadScheduled()
+        #expect(h.model.scheduledOpen)
+        #expect(h.model.scheduledItems.map(\.id) == [id])
+    }
+
+    @Test("a missing workspace still reports a Scheduled read failure")
+    func missingWorkspace() async {
+        let h = await opened()
+        h.model.scheduledOpen = true
+        h.server.edit { $0.scheduledError = (404, "WORKSPACE_NOT_FOUND") }
+
+        await h.model.loadScheduled()
+
+        #expect(h.model.scheduledOpen)
+        #expect(h.model.scheduledFailed)
+        #expect(!h.model.scheduledLoading)
+    }
+
+    @Test("a cancelled Scheduled read cannot dismiss the page")
+    func cancelledRead() async {
+        let h = await opened()
+        let response = Gate()
+        h.model.scheduledOpen = true
+        h.server.edit {
+            $0.scheduledError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeScheduledResponse = { await response.wait() }
+        }
+
+        let reading = Task { await h.model.loadScheduled() }
+        #expect(await eventually { h.server.requests.contains { $0.url.path.hasSuffix("/scheduled") } })
+        reading.cancel()
+        await response.open()
+        await reading.value
+
+        #expect(h.model.scheduledOpen)
+        #expect(!h.model.scheduledFailed)
+        #expect(!h.model.scheduledLoading)
+    }
+
     @Test("unfinished uploads and invalid dates cannot become scheduled sends")
     func invalid() async {
         let h = await opened()

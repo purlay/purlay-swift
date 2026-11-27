@@ -100,10 +100,18 @@ extension AppModel {
         do {
             let items = try await api.listScheduledMessages(workspaceId: workspace.id.value)
             guard context == contextGeneration, generation == scheduledGeneration else { return }
+            try Task.checkCancellation()
             scheduledItems = items
         } catch {
-            guard context == contextGeneration, generation == scheduledGeneration else { return }
-            scheduledFailed = true
+            guard context == contextGeneration, generation == scheduledGeneration,
+                !TransportError.isCancellation(error)
+            else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                scheduledItems = []
+                scheduledOpen = false
+            } else {
+                scheduledFailed = true
+            }
         }
     }
 
