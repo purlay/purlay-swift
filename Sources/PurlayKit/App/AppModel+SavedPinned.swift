@@ -4,6 +4,10 @@ import PurlayContract
 extension AppModel {
     // MARK: Saved, pinned, and the last message
 
+    public enum SavedWriteOutcome: Equatable, Sendable {
+        case updated, temporarilyUnavailable, failed
+    }
+
     public func isSaved(_ message: Message) -> Bool { savedIDs[message.id] != nil }
     public var pinnedMessages: [PinnedMessage] { selectedChannel.flatMap { pins[$0] } ?? [] }
     public func isPinned(_ message: Message) -> Bool {
@@ -64,8 +68,8 @@ extension AppModel {
         _ = await writeSaved(saved, message)
     }
 
-    private func writeSaved(_ saved: Bool, _ message: Message) async -> Bool {
-        guard let api, !savedUpdating.contains(message.id), !saved || message.deletedAt == nil else { return false }
+    private func writeSaved(_ saved: Bool, _ message: Message) async -> SavedWriteOutcome {
+        guard let api, !savedUpdating.contains(message.id), !saved || message.deletedAt == nil else { return .failed }
         let session = contextGeneration
         savedUpdating.insert(message.id)
         defer { if session == contextGeneration { savedUpdating.remove(message.id) } }
@@ -77,16 +81,18 @@ extension AppModel {
             } else {
                 try await api.unsaveMessage(messageId: message.id.value)
             }
-            guard session == contextGeneration else { return false }
+            guard session == contextGeneration else { return .failed }
             if !saved { savedItems.removeAll { $0.message.id == message.id } }
             if savedOpen || savedLoading { await loadSaved(savedState) }
-            return true
+            return session == contextGeneration ? .updated : .failed
         } catch {
-            guard session == contextGeneration else { return false }
+            guard session == contextGeneration else { return .failed }
             savedIDs[message.id] = isPersonallyDeleted(message.id) ? nil : before
-            guard (error as? APIError)?.isMissingRoute != true else { return false }
+            if (error as? APIError)?.isMissingRoute == true {
+                return Task.isCancelled ? .failed : .temporarilyUnavailable
+            }
             if let api = error as? APIError, api.code == .savedLimit { say(.savedFull) } else { say(.saveFailed) }
-            return false
+            return .failed
         }
     }
 
@@ -163,19 +169,23 @@ extension AppModel {
         savedPaginationFailed = false
     }
 
-    /// Moves a saved message between the person's lists only after the server accepts the change.
     @discardableResult
     public func moveSaved(_ item: SavedItem, to state: SavedState) async -> Bool {
+        await moveSavedWithOutcome(item, to: state) == .updated
+    }
+
+    /// Moves a saved message only after the server accepts it, distinguishing a temporarily closed Chat route.
+    public func moveSavedWithOutcome(_ item: SavedItem, to state: SavedState) async -> SavedWriteOutcome {
         guard let api, item.state != state, SavedState.known.contains(state), item.message.deletedAt == nil,
             !isPersonallyDeleted(item.message.id), !savedUpdating.contains(item.message.id)
-        else { return false }
+        else { return .failed }
         let session = contextGeneration
         savedUpdating.insert(item.message.id)
         defer { if session == contextGeneration { savedUpdating.remove(item.message.id) } }
         do {
             try await api.saveMessage(
                 messageId: item.message.id.value, body: SaveMessageRequest(state: .init(rawValue: state.rawValue)))
-            guard session == contextGeneration, !isPersonallyDeleted(item.message.id) else { return false }
+            guard session == contextGeneration, !isPersonallyDeleted(item.message.id) else { return .failed }
             savedIDs[item.message.id] = state
             if savedStatus == .loading || loadingMoreSaved {
                 // A read may have taken its snapshot before this write committed. Supersede it with a read after the write.
@@ -191,10 +201,14 @@ extension AppModel {
                     savedItems.insert(moved, at: 0)
                 }
             }
-            return true
+            return session == contextGeneration ? .updated : .failed
         } catch {
-            if session == contextGeneration, (error as? APIError)?.isMissingRoute != true { say(.saveFailed) }
-            return false
+            guard session == contextGeneration else { return .failed }
+            if (error as? APIError)?.isMissingRoute == true {
+                return Task.isCancelled ? .failed : .temporarilyUnavailable
+            }
+            say(.saveFailed)
+            return .failed
         }
     }
 
@@ -207,8 +221,15 @@ extension AppModel {
     }
 
     public func removeSaved(_ item: SavedItem) async {
+        _ = await removeSavedWithOutcome(item)
+    }
+
+    /// Removes a saved message only after the server accepts it, distinguishing a temporarily closed Chat route.
+    public func removeSavedWithOutcome(_ item: SavedItem) async -> SavedWriteOutcome {
         let session = contextGeneration
-        guard await writeSaved(false, item.message), session == contextGeneration else { return }
+        let outcome = await writeSaved(false, item.message)
+        guard session == contextGeneration else { return .failed }
+        guard outcome == .updated else { return outcome }
         if savedIDs[item.message.id] == nil {
             if savedStatus == .loading || loadingMoreSaved {
                 await loadSaved(savedState)
@@ -216,6 +237,7 @@ extension AppModel {
                 savedItems.removeAll { $0.id == item.id }
             }
         }
+        return session == contextGeneration ? .updated : .failed
     }
 
     /// Pins a message for its channel, or lets the pin go: painted at once, put back with a word if the server refuses. A deleted message

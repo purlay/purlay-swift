@@ -49,6 +49,10 @@ extension AppModel {
         case failed
     }
 
+    public enum BookmarkAddOutcome: Equatable, Sendable {
+        case added, invalid, full, temporarilyUnavailable, failed
+    }
+
     /// The links kept under the open channel's header.
     public var channelBookmarks: [ChannelBookmark] { selectedChannel.flatMap { bookmarks[$0] } ?? [] }
 
@@ -80,8 +84,17 @@ extension AppModel {
         return await reloadBookmarks(selectedChannel) == .loaded
     }
 
-    /// Adds a link to a channel. Held only once the server made it: the same address again is the bookmark already there.
     public func addBookmark(title: String, address: String, in channel: Uuid) async -> BookmarkOutcome {
+        switch await addBookmarkWithOutcome(title: title, address: address, in: channel) {
+        case .added: .added
+        case .invalid: .invalid
+        case .full: .full
+        case .temporarilyUnavailable, .failed: .failed
+        }
+    }
+
+    /// Adds a link only after the server accepts it, distinguishing a temporarily closed Chat route.
+    public func addBookmarkWithOutcome(title: String, address: String, in channel: Uuid) async -> BookmarkAddOutcome {
         guard let api else { return .failed }
         guard let url = BookmarkAddress.url(address) else { return .invalid }
         let session = contextGeneration
@@ -95,6 +108,9 @@ extension AppModel {
             bookmarks[channel] = list
             return .added
         } catch let error as APIError {
+            if error.isMissingRoute {
+                return session == contextGeneration && !Task.isCancelled ? .temporarilyUnavailable : .failed
+            }
             switch error.code {
             case .bookmarksLimit: return .full
             case .validationFailed: return .invalid

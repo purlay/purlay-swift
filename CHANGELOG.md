@@ -6,6 +6,7 @@
   their Chat read route. Keep the session, existing system alarms and later requests available.
 - Restore saved markers, pins and bookmarks when a Chat node cannot serve their write route. Skip the connection notice
   and the bookmark follow-up read for that refusal.
+- Expose temporary-unavailability outcomes for moving or removing saved messages and adding channel bookmarks.
 - Keep confirmed Inbox receipts, pending scheduled edits and reminder alarms when a Chat node declines an action route.
   Dismiss only the thread that was acted on when its resolution or follow route is unavailable.
 

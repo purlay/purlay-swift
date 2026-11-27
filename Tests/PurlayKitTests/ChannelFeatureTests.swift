@@ -175,17 +175,56 @@ struct ChannelFeatureTests {
         let reads = calls(h, "GET", "/bookmarks").count
         h.server.edit { $0.bookmarkError = (404, "ROUTE_NOT_FOUND") }
 
+        #expect(
+            await h.model.addBookmarkWithOutcome(title: "Unavailable", address: "example.com", in: first)
+                == .temporarilyUnavailable)
         #expect(await h.model.addBookmark(title: "Unavailable", address: "example.com", in: first) == .failed)
         await h.model.removeBookmark(docs)
         #expect(h.model.channelBookmarks == [docs, board])
         #expect(!h.model.notices.contains { $0.kind == .bookmarkFailed })
         #expect(calls(h, "GET", "/bookmarks").count == reads)
-        #expect(calls(h, "POST", "/bookmarks").count == 1)
+        #expect(calls(h, "POST", "/bookmarks").count == 2)
         #expect(calls(h, "DELETE", "/bookmarks/").count == 1)
 
         h.server.edit { $0.bookmarkError = nil }
         await h.model.removeBookmark(docs)
         #expect(h.model.channelBookmarks == [board])
+    }
+
+    @Test("typed bookmark addition preserves invalid, limit, refusal and confirmed success outcomes")
+    func bookmarkAddOutcomes() async {
+        let h = await opened()
+        #expect(await h.model.addBookmarkWithOutcome(title: "x", address: "invalid address", in: first) == .invalid)
+        let refusals: [(Int, String, AppModel.BookmarkAddOutcome)] = [
+            (409, "BOOKMARKS_LIMIT", .full), (400, "VALIDATION_FAILED", .invalid),
+            (403, "FORBIDDEN", .failed), (404, "CHANNEL_NOT_FOUND", .failed), (403, "ROUTE_NOT_FOUND", .failed),
+        ]
+        for (status, code, expected) in refusals {
+            h.server.edit { $0.bookmarkError = (status, code) }
+            #expect(await h.model.addBookmarkWithOutcome(title: "Docs", address: "example.com", in: first) == expected)
+        }
+        #expect(h.model.channelBookmarks.isEmpty)
+        h.server.edit { $0.bookmarkError = nil }
+        #expect(await h.model.addBookmarkWithOutcome(title: "Docs", address: "example.com", in: first) == .added)
+        #expect(h.model.channelBookmarks.map(\.title) == ["Docs"])
+    }
+
+    @Test("a closed bookmark addition from the previous session cannot report temporary unavailability here")
+    func closedBookmarkAddAfterSignOut() async {
+        let h = await opened()
+        let gate = Gate()
+        h.server.edit {
+            $0.bookmarkError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeBookmarkWriteResponse = { await gate.wait() }
+        }
+        let adding = Task {
+            await h.model.addBookmarkWithOutcome(title: "Docs", address: "example.com", in: first)
+        }
+        #expect(await eventually { calls(h, "POST", "/bookmarks").count == 1 })
+        await h.model.signOut(.thisDevice)
+        await gate.open()
+        #expect(await adding.value == .failed)
+        #expect(h.model.bookmarks(in: first).isEmpty)
     }
 
     @Test("a late closed bookmark write cannot restore a link after sign-out")

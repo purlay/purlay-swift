@@ -197,19 +197,38 @@ struct SavedListTests {
         let readCount = h.server.requests.filter { $0.method == "GET" && $0.url.path.hasSuffix("/saved") }.count
         h.server.edit { $0.saveError = (404, "ROUTE_NOT_FOUND") }
 
+        #expect(await h.model.moveSavedWithOutcome(item, to: .completed) == .temporarilyUnavailable)
         #expect(await h.model.moveSaved(item, to: .completed) == false)
         #expect(h.model.savedIDs[item.message.id] == .inProgress)
         #expect(h.model.savedItems == rows)
 
         // The page and its sidebar markers are read independently.
         h.model.savedIDs[item.message.id] = nil
-        await h.model.removeSaved(item)
+        #expect(await h.model.removeSavedWithOutcome(item) == .temporarilyUnavailable)
         #expect(h.model.savedItems == rows)
         #expect(!h.model.isSaved(item.message))
         #expect(h.model.savedOpen)
         #expect(h.model.savedUpdating.isEmpty)
         #expect(!h.model.notices.contains { $0.kind == .saveFailed })
         #expect(h.server.requests.filter { $0.method == "GET" && $0.url.path.hasSuffix("/saved") }.count == readCount)
+    }
+
+    @Test("the saved action outcomes distinguish real refusals from a confirmed update")
+    func savedActionOutcomes() async throws {
+        let h = await ready()
+        await h.model.loadSaved(.inProgress)
+        let item = try #require(h.model.savedItems.first)
+        for (status, code) in [(403, "FORBIDDEN"), (404, "MESSAGE_NOT_FOUND"), (403, "ROUTE_NOT_FOUND")] {
+            h.server.edit { $0.saveError = (status, code) }
+            #expect(await h.model.moveSavedWithOutcome(item, to: .completed) == .failed)
+            #expect(await h.model.removeSavedWithOutcome(item) == .failed)
+            #expect(h.model.savedIDs[item.message.id] == .inProgress)
+        }
+        h.server.edit { $0.saveError = nil }
+        #expect(await h.model.moveSavedWithOutcome(item, to: .completed) == .updated)
+        #expect(h.model.savedIDs[item.message.id] == .completed)
+        #expect(await h.model.removeSavedWithOutcome(item) == .updated)
+        #expect(!h.model.isSaved(item.message))
     }
 
     @Test(
