@@ -57,6 +57,28 @@ struct SidebarLayoutTests {
         #expect(h.model.sidebar.first { $0.id == group.sectionID }?.channels.count == 1)
     }
 
+    @Test("a closed Chat group route stops refresh retries and keeps the last groups")
+    func routeUnavailable() async throws {
+        let h = ModelHarness()
+        await h.signedIn()
+        #expect(await h.model.saveSidebarGroup(name: "Ops"))
+        let group = try #require(h.model.sidebarLayout.groups.first)
+        h.server.edit {
+            $0.groupStatus = 404
+            $0.groupErrorCode = .routeNotFound
+        }
+        let before = groupRequests(h, "GET").count
+        #expect(await h.model.loadChannelGroups())
+        #expect(groupRequests(h, "GET").count == before + 1)
+        #expect(h.model.sidebarLayout.groups == [group])
+
+        h.server.edit { $0.groupErrorCode = .channelGroupNotFound }
+        #expect(await !h.model.loadChannelGroups())
+        h.server.edit { $0.groupStatus = 200 }
+        #expect(await h.model.loadChannelGroups())
+        #expect(h.model.sidebarLayout.groups == [group])
+    }
+
     @Test("folding a group is kept by the server, and put back if it refuses")
     func folding() async throws {
         let h = ModelHarness()
