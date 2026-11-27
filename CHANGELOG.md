@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Hold waiting composer sends during sign-out. Resume them if the server refuses sign-out and discard them when the local session ends.
+
 ## 0.2.1 — 2026-11-27
 
 - Native browser sign-in sends the app platform so the server can name Purlay for Mac or Purlay for iOS (D-191).
