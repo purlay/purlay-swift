@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.1 — 2026-11-27
+
 - Dismiss Threads, Saved Messages, Open Topics, Scheduled Messages, Reminders and Pins if a server node does not serve
   their Chat read route. Keep the session, existing system alarms and later requests available.
 - Restore saved markers, pins and bookmarks when a Chat node cannot serve their write route. Skip the connection notice
