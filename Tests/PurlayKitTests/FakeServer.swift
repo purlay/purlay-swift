@@ -44,6 +44,8 @@ final class FakeServer: HTTPTransport {
         var savedMutationDelay: Int?
         var saveError: (status: Int, code: String)?
         var pins: [String: [String]] = [:]
+        var pinsReadError: (status: Int, code: String)?
+        var beforePinsResponse: (@Sendable () async -> Void)?
         var pinError: (status: Int, code: String)?
         var searchStatus = 200
         var searchErrorCode = "INTERNAL"
@@ -971,6 +973,10 @@ final class FakeServer: HTTPTransport {
             return HTTPResponse(status: 204)
         case ("GET", _) where path.hasPrefix("/api/channels/") && path.hasSuffix("/pins"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforePinsResponse?()
+            if let failure = snapshot.pinsReadError {
+                return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
+            }
             let id = String(path.dropFirst("/api/channels/".count).dropLast("/pins".count))
             let all = Array(snapshot.messages.values.joined())
             let pinned = (snapshot.pins[id] ?? []).compactMap { pin in all.first { $0.id.value == pin } }

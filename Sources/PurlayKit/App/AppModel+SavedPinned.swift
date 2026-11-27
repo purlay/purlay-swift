@@ -31,12 +31,25 @@ extension AppModel {
 
     @discardableResult
     func reloadPins(_ channel: Uuid) async -> Bool {
-        guard let api else { return true }
+        guard let api, !Task.isCancelled else { return true }
         let session = contextGeneration
-        guard let list = try? await api.listPins(channelId: channel.value) else { return false }
-        guard session == contextGeneration else { return true }
-        pins[channel] = list.filter { !isPersonallyDeleted($0.message.id) }
-        return true
+        let navigation = navigationGeneration
+        let presentation = pinsOpen && channel == selectedChannel ? pinsPresentationGeneration : nil
+        do {
+            let list = try await api.listPins(channelId: channel.value)
+            guard session == contextGeneration, !Task.isCancelled else { return true }
+            pins[channel] = list.filter { !isPersonallyDeleted($0.message.id) }
+            return true
+        } catch {
+            guard session == contextGeneration, !TransportError.isCancellation(error) else { return true }
+            guard (error as? APIError)?.isMissingRoute == true else { return false }
+            if presentation == pinsPresentationGeneration, navigation == navigationGeneration,
+                channel == selectedChannel
+            {
+                pinsOpen = false
+            }
+            return true
+        }
     }
 
     /// The pinned sheet asks again when opened, and owns the recovery state when the server cannot be reached.
