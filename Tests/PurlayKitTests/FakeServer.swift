@@ -92,6 +92,8 @@ final class FakeServer: HTTPTransport {
         /// How long the server takes over a list, by the `unreadOnly` it was asked with ("true" or "false").
         var notificationDelays: [String: Int] = [:]
         var notificationReadStatus = 204
+        var notificationReadErrorCode = "INTERNAL"
+        var beforeNotificationReadResponse: (@Sendable () async -> Void)?
         var notificationReads: [ReadNotificationsRequest] = []
         var searchPageSize: Int?
         var savedSearches: [SavedSearch] = []
@@ -669,8 +671,11 @@ final class FakeServer: HTTPTransport {
             return json(200, "{\"data\":\(Self.encoded(page)),\"nextCursor\":\(next)}")
         case ("PUT", "/api/notifications/read"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeNotificationReadResponse?()
             if snapshot.notificationReadStatus != 204 {
-                return json(snapshot.notificationReadStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(
+                    snapshot.notificationReadStatus,
+                    #"{"error":{"code":"\#(snapshot.notificationReadErrorCode)","message":"x"}}"#)
             }
             guard let body = request.body,
                 let read = try? JSONDecoder().decode(ReadNotificationsRequest.self, from: body)
