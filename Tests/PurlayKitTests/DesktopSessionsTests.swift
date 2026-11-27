@@ -101,6 +101,49 @@ struct DesktopSessionsTests {
         #expect(first.me == nil && first.engine == nil)
     }
 
+    @Test("a refused sign-out holds sends across workspaces that share the credential")
+    func signOutHoldsAnotherWorkspace() async throws {
+        let h = ModelHarness()
+        try h.rememberedSession()
+        let desktop = desktop(h)
+        await desktop.launch()
+        let first = desktop.active
+        let channel = Uuid(channel(1))!
+        await first.open(channel)
+        await addSecond(desktop)
+        let second = desktop.active
+        for socket in h.sockets { socket.handlers.opened() }
+        await h.settle()
+        let firstSocket = try #require(h.sockets.first)
+        let upload = Gate()
+        let logout = Gate()
+        h.server.edit {
+            $0.beforeUploadResponse = { await upload.wait() }
+            $0.beforeLogoutResponse = { await logout.wait() }
+            $0.logoutStatus = 500
+        }
+        let slow = Task {
+            await first.attach([PickedFile(name: "held.txt", data: Data([1]))], channel: channel, parent: nil)
+        }
+        #expect(await eventually { h.server.requests.contains { $0.url.path.hasSuffix("/uploads") } })
+        #expect(first.send("from the first workspace"))
+        let signingOut = Task { await second.signOut(.everywhere) }
+        #expect(await eventually { h.server.requests.contains { $0.url.path == "/auth/logout-all" } })
+        await upload.open()
+        await slow.value
+        #expect(first.isWaiting(channel: channel, parent: nil))
+        #expect(firstSocket.sent.allSatisfy { !$0.contains("MESSAGE_SEND") })
+        await logout.open()
+        guard case .notDone = await signingOut.value else {
+            Issue.record("Expected the server to refuse sign-out")
+            return
+        }
+        #expect(first.phase == .ready && second.phase == .ready)
+        #expect(firstSocket.sent.filter { $0.contains("MESSAGE_SEND") }.count == 1)
+        #expect(first.pending.count == 1 && second.pending.isEmpty)
+        #expect(!first.isWaiting(channel: channel, parent: nil))
+    }
+
     @Test("launch restores every workspace, its selected session, and scoped drafts")
     func restore() async throws {
         let h = ModelHarness()

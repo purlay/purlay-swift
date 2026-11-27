@@ -18,7 +18,7 @@ extension AppModel {
     /// retried or removed.
     public func canSend(text: String, channel: Uuid, parent: Uuid?) -> Bool {
         let place = Place(channel: channel, parent: parent)
-        guard chatAvailable, waitingSends[place] == nil else { return false }
+        guard chatAvailable, !isSigningOut, waitingSends[place] == nil else { return false }
         let held = uploadsByPlace[place] ?? []
         guard !held.contains(where: \.hasFailed) else { return false }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !held.isEmpty
@@ -58,7 +58,7 @@ extension AppModel {
     /// A waiting send goes when its last file lands. If a file failed or was taken off it does not go: its words are handed back to the
     /// box, and a failure says where.
     private func settle(_ place: Place) {
-        guard let words = waitingSends[place] else { return }
+        guard !isSigningOut, let words = waitingSends[place] else { return }
         let held = uploadsByPlace[place] ?? []
         guard !held.contains(where: \.isUploading) else { return }
         waitingSends[place] = nil
@@ -72,6 +72,10 @@ extension AppModel {
         } else {
             dispatch(words, place)
         }
+    }
+
+    func settleWaitingSends() {
+        for place in Array(waitingSends.keys) { settle(place) }
     }
 
     /// Chosen files are uploaded at once, a few at a time, each under an id of the app's making so that the same upload again is the same
