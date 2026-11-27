@@ -21,7 +21,7 @@ extension AppModel {
 
     /// Opens a thread in the panel, or reads the open one again. The answer of a thread that was left for another is not used.
     public func openThread(_ root: Message) async {
-        guard let api else { return }
+        guard !Task.isCancelled, let api else { return }
         threadGeneration += 1
         let generation = threadGeneration
         if thread?.root != root.id {
@@ -34,12 +34,14 @@ extension AppModel {
         do {
             var page = try await api.getThread(messageId: root.id.value, query: PageQuery(limit: size))
             guard generation == threadGeneration else { return }
+            try Task.checkCancellation()
             var replies = page.data
             var next = page.nextCursor
             var pages = 1
             while let cursor = next, pages < Self.threadPagesMax {
                 page = try await api.getThread(messageId: root.id.value, query: PageQuery(after: cursor, limit: size))
                 guard generation == threadGeneration else { return }
+                try Task.checkCancellation()
                 replies += page.data
                 next = page.nextCursor
                 pages += 1
@@ -47,7 +49,11 @@ extension AppModel {
             thread?.load(replies.map(chat.personalProjection), next: next)
             markThreadReadIfSeen()
         } catch {
-            guard generation == threadGeneration else { return }
+            guard generation == threadGeneration, !TransportError.isCancellation(error) else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                closeThread()
+                return
+            }
             if thread?.isLoaded != true { threadLoadFailed = true }
             say(.threadFailed)
         }

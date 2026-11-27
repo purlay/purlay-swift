@@ -89,7 +89,8 @@ extension AppModel {
         scheduledItems.sort { $0.sendAt < $1.sendAt }
     }
 
-    public func loadScheduled() async {
+    /// The dismissal decision is made when the request finishes, since an editor may open while it is in flight.
+    public func loadScheduled(dismissOnUnavailable: () -> Bool = { true }) async {
         guard supportsScheduling, let api, let workspace else { return }
         scheduledGeneration += 1
         let generation = scheduledGeneration
@@ -100,10 +101,20 @@ extension AppModel {
         do {
             let items = try await api.listScheduledMessages(workspaceId: workspace.id.value)
             guard context == contextGeneration, generation == scheduledGeneration else { return }
+            try Task.checkCancellation()
             scheduledItems = items
         } catch {
-            guard context == contextGeneration, generation == scheduledGeneration else { return }
-            scheduledFailed = true
+            guard context == contextGeneration, generation == scheduledGeneration,
+                !TransportError.isCancellation(error)
+            else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                if dismissOnUnavailable() {
+                    scheduledItems = []
+                    scheduledOpen = false
+                }
+            } else {
+                scheduledFailed = true
+            }
         }
     }
 

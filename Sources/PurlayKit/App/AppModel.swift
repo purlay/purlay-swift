@@ -337,7 +337,10 @@ public final class AppModel {
     /// The palette (`⌘K`) and the search sheet are open. A command of the menu asks for them; the window shows them.
     public var paletteOpen = false
     public var searchOpen = false
-    public var pinsOpen = false
+    public var pinsOpen = false {
+        didSet { if pinsOpen != oldValue { pinsPresentationGeneration += 1 } }
+    }
+    @ObservationIgnored private(set) var pinsPresentationGeneration = 0
     public var remindersOpen = false { didSet { if remindersOpen { closePages(except: .reminders) } } }
     public var reminderTarget: Message?
     public var deletionTarget: Message?

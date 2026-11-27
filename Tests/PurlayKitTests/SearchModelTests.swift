@@ -294,32 +294,39 @@ struct SearchModelTests {
     @Test("cancelling a running read is quiet, and reopening the same query resumes it")
     func cancellationAndReopen() async {
         let h = await opened([channel(1): [msg(1_000, "migration")]])
-        h.server.edit { $0.searchDelays["migration"] = 120 }
+        let gate = Gate()
+        h.server.edit { $0.searchGate = gate }
         let read = Task { await h.model.search("migration") }
-        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await eventually { calls(h, "/search").count == 1 })
+        #expect(h.model.searchStatus == .searching)
         read.cancel()
+        await gate.open()
         await read.value
         #expect(h.model.searchStatus == .idle)
         #expect(h.model.searchQuery == "migration")
-        h.server.edit { $0.searchDelays = [:] }
+        h.server.edit { $0.searchGate = nil }
         h.model.openSearch()
-        await h.settle()
-        #expect(h.model.searchStatus == .done)
+        #expect(await eventually { h.model.searchStatus == .done })
         #expect(h.model.searchResults.map(\.content) == ["migration"])
     }
 
     @Test("closing search immediately releases its loading state, and its late read cannot replace a resumed query")
     func closeDuringRead() async {
-        let h = await opened([channel(1): [msg(1_000, "migration")]])
-        h.server.edit { $0.searchDelays["migration"] = 120 }
+        let h = await opened([channel(1): [msg(1_000, "old migration")]])
+        let gate = Gate()
+        h.server.edit { $0.searchGate = gate }
         let read = Task { await h.model.search("migration") }
-        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await eventually { calls(h, "/search").count == 1 })
+        #expect(h.model.searchStatus == .searching)
         h.model.cancelSearch()
         #expect(h.model.searchStatus == .idle)
-        h.server.edit { $0.searchDelays = [:] }
+        h.server.edit {
+            $0.searchGate = nil
+            $0.messages = [channel(1): [msg(2_000, "migration")]]
+        }
         h.model.openSearch()
-        await h.settle()
-        #expect(h.model.searchStatus == .done)
+        #expect(await eventually { h.model.searchStatus == .done })
+        await gate.open()
         await read.value
         #expect(h.model.searchStatus == .done)
         #expect(h.model.searchResults.map(\.content) == ["migration"])
@@ -486,9 +493,8 @@ struct SearchModelTests {
             $0.savedSearchPageSize = 2
         }
         h.model.openSearch()
-        await h.settle()
+        #expect(await eventually { h.model.savedSearchesStatus == .loaded })
         #expect(h.model.savedSearches.map(\.name) == ["three", "two", "one"])
-        #expect(h.model.savedSearchesStatus == .loaded)
         #expect(calls(h, "/saved-searches").count == 2)
     }
 

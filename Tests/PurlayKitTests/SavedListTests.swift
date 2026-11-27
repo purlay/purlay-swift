@@ -30,6 +30,50 @@ struct SavedListTests {
         #expect(h.model.savedItems.isEmpty)
     }
 
+    @Test("a closed Chat route dismisses Saved and a new read can land on a healthy node", arguments: [false, true])
+    func closedChatRead(paging: Bool) async {
+        let h = await ready()
+        h.model.savedOpen = true
+        h.server.edit { $0.savedPageSize = 2 }
+        await h.model.loadSaved(.inProgress)
+        #expect(h.model.savedHasMore)
+        h.server.edit {
+            $0.savedListStatus = 404
+            $0.savedListErrorCode = "ROUTE_NOT_FOUND"
+        }
+        if paging { await h.model.loadMoreSaved() } else { await h.model.loadSaved(.inProgress) }
+        #expect(!h.model.savedOpen)
+        #expect(h.model.savedStatus == .idle)
+        #expect(h.model.savedItems.isEmpty)
+        #expect(!h.model.savedHasMore)
+        #expect(!h.model.savedFailed)
+        #expect(!h.model.savedLoading)
+        #expect(h.model.chatAvailable)
+        #expect(h.model.phase == .ready)
+
+        h.server.edit { $0.savedListStatus = 200 }
+        h.model.savedOpen = true
+        await h.model.loadSaved(.inProgress)
+        #expect(h.model.savedStatus == .loaded)
+        #expect(h.model.savedItems.count == 2)
+        #expect(h.model.savedHasMore)
+    }
+
+    @Test("authorization and missing resources retain the Saved failure and its retry")
+    func ordinaryRefusals() async {
+        let h = await ready()
+        h.model.savedOpen = true
+        for (status, code) in [(403, "FORBIDDEN"), (404, "MESSAGE_NOT_FOUND"), (403, "ROUTE_NOT_FOUND")] {
+            h.server.edit {
+                $0.savedListStatus = status
+                $0.savedListErrorCode = code
+            }
+            await h.model.loadSaved(.inProgress)
+            #expect(h.model.savedOpen)
+            #expect(h.model.savedStatus == .failed)
+        }
+    }
+
     @Test("all saved messages can be reached one page at a time without duplicates")
     func pages() async {
         let h = await ready()
@@ -74,6 +118,25 @@ struct SavedListTests {
         #expect(h.model.savedStatus == .loaded)
         #expect(h.model.savedItems.isEmpty)
         #expect(!h.model.savedHasMore)
+    }
+
+    @Test("a late closed route cannot dismiss a newer Saved tab")
+    func staleClosedRoute() async {
+        let h = await ready()
+        h.model.savedOpen = true
+        h.server.edit {
+            $0.savedListStatus = 404
+            $0.savedListErrorCode = "ROUTE_NOT_FOUND"
+            $0.savedDelays["in_progress"] = 200
+        }
+        let old = Task { await h.model.loadSaved(.inProgress) }
+        #expect(await eventually { h.server.requests.contains { $0.url.path.hasSuffix("/saved") } })
+        h.server.edit { $0.savedListStatus = 200 }
+        await h.model.loadSaved(.archived)
+        await old.value
+        #expect(h.model.savedOpen)
+        #expect(h.model.savedFilter == .archived)
+        #expect(h.model.savedStatus == .loaded)
     }
 
     @Test("a saved list that arrives after sign-out cannot bring the previous person's data back")

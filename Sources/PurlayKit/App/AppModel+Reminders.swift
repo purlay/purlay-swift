@@ -23,6 +23,12 @@ public enum ReminderFailure: Error, LocalizedError {
     }
 }
 
+private enum ReminderRead {
+    case handled
+    case unavailable(generation: Int)
+    case failed
+}
+
 extension AppModel {
     public var supportsReminders: Bool { serverInfo?.capabilities?.messageReminders == true }
     public var reminderItems: [MessageReminder] { sessionOwner?.reminderItems ?? storedReminders }
@@ -39,8 +45,21 @@ extension AppModel {
     }
 
     @discardableResult public func loadReminders() async -> Bool {
-        if let sessionOwner { return await sessionOwner.loadReminders() }
-        guard supportsReminders, let api, let workspace else { return true }
+        let owner = sessionOwner ?? self
+        let context = contextGeneration
+        let result = await owner.readReminders()
+        guard context == contextGeneration, !Task.isCancelled else { return true }
+        switch result {
+        case .handled: return true
+        case .unavailable(let generation):
+            if generation == owner.reminderGeneration { remindersOpen = false }
+            return true
+        case .failed: return false
+        }
+    }
+
+    private func readReminders() async -> ReminderRead {
+        guard supportsReminders, let api, let workspace else { return .handled }
         reminderGeneration += 1
         let generation = reminderGeneration
         let context = contextGeneration
@@ -49,14 +68,21 @@ extension AppModel {
         defer { if generation == reminderGeneration { loadingReminders = false } }
         do {
             let items = try await api.listMessageReminders(workspaceId: workspace.id.value)
-            guard generation == reminderGeneration, context == contextGeneration else { return true }
+            guard generation == reminderGeneration, context == contextGeneration else { return .handled }
+            try Task.checkCancellation()
             storedReminders = items.filter { !isPersonallyDeleted($0.message.id) }
             syncReminderNotices()
-            return true
+            return .handled
         } catch {
-            guard generation == reminderGeneration, context == contextGeneration else { return true }
+            guard generation == reminderGeneration, context == contextGeneration,
+                !TransportError.isCancellation(error)
+            else { return .handled }
+            if (error as? APIError)?.isMissingRoute == true {
+                // The next node can still serve this list. Keep the alarms already set for the account.
+                return .unavailable(generation: generation)
+            }
             failedReminders = true
-            return false
+            return .failed
         }
     }
 

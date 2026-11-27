@@ -72,6 +72,94 @@ struct ThreadModelTests {
         #expect(h.model.thread?.replies.count == 1)
     }
 
+    @Test("a missing thread route closes only the panel and skips following", arguments: [false, true])
+    func missingRoute(paginated: Bool) async throws {
+        let h = await opened(replies: [idAt(1_000).value: [reply(2_000), reply(3_000)]])
+        let feed = try #require(h.model.window?.messages)
+        h.server.edit {
+            $0.threadPageSize = 1
+            $0.threadStatus = 404
+            $0.threadErrorCode = "ROUTE_NOT_FOUND"
+            $0.threadErrorOnCursor = paginated
+        }
+        await h.model.openThread(root())
+
+        #expect(calls(h, "/thread").count == (paginated ? 2 : 1))
+        #expect(calls(h, "/follow").isEmpty)
+        #expect(calls(h, "/thread/read", method: "PUT").isEmpty)
+        #expect(h.model.thread == nil)
+        #expect(h.model.threadRoot == nil)
+        #expect(!h.model.threadLoadFailed)
+        #expect(!h.model.notices.map(\.kind).contains(.threadFailed))
+        #expect(h.model.phase == .ready)
+        #expect(h.model.chatAvailable)
+        #expect(h.model.window?.messages == feed)
+    }
+
+    @Test(
+        "a thread failure still asks for retry unless both the status and the error code match",
+        arguments: [(404, "MESSAGE_NOT_FOUND"), (500, "ROUTE_NOT_FOUND")])
+    func otherFailure(status: Int, code: String) async {
+        let h = await opened()
+        h.server.edit {
+            $0.threadStatus = status
+            $0.threadErrorCode = code
+        }
+        await h.model.openThread(root())
+        #expect(h.model.thread?.root == idAt(1_000))
+        #expect(h.model.threadLoadFailed)
+        #expect(h.model.notices.map(\.kind).contains(.threadFailed))
+        #expect(calls(h, "/follow").count == 1)
+    }
+
+    @Test("a late missing route cannot close a newer thread")
+    func staleMissingRoute() async {
+        let a = root()
+        let b = root(2_000)
+        let h = await opened([a, b])
+        let gate = Gate()
+        h.server.edit {
+            $0.threadStatus = 404
+            $0.threadErrorCode = "ROUTE_NOT_FOUND"
+            $0.beforeThreadResponse = { await gate.wait() }
+        }
+        let old = Task { await h.model.openThread(a) }
+        #expect(await eventually { calls(h, "/thread").count == 1 })
+        h.server.edit {
+            $0.threadStatus = 200
+            $0.beforeThreadResponse = nil
+        }
+        await h.model.openThread(b)
+        await gate.open()
+        await old.value
+
+        #expect(h.model.thread?.root == b.id)
+        #expect(h.model.thread?.isLoaded == true)
+        #expect(calls(h, "/follow").map { $0.url.path } == ["/api/messages/\(b.id.value)/follow"])
+        #expect(!h.model.notices.map(\.kind).contains(.threadFailed))
+    }
+
+    @Test("ignores a thread route refusal after cancellation")
+    func cancelledMissingRoute() async {
+        let h = await opened()
+        let gate = Gate()
+        h.server.edit {
+            $0.threadStatus = 404
+            $0.threadErrorCode = "ROUTE_NOT_FOUND"
+            $0.beforeThreadResponse = { await gate.wait() }
+        }
+        let read = Task { await h.model.openThread(root()) }
+        #expect(await eventually { calls(h, "/thread").count == 1 })
+        read.cancel()
+        await gate.open()
+        await read.value
+
+        #expect(h.model.thread?.root == idAt(1_000))
+        #expect(!h.model.threadLoadFailed)
+        #expect(!h.model.notices.map(\.kind).contains(.threadFailed))
+        #expect(calls(h, "/follow").isEmpty)
+    }
+
     @Test(
         "one thread at a time: opening another replaces it, and the slow answer of the first never overwrites the second"
     )
