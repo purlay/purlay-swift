@@ -2,11 +2,12 @@ import Foundation
 import PurlayContract
 
 public enum SchedulingFailure: Error, LocalizedError {
-    case unavailable, files, content, time, limit, sent, access, failed, sessionChanged
+    case unavailable, temporarilyUnavailable, files, content, time, limit, sent, access, failed, sessionChanged
 
     public var errorDescription: String? {
         switch self {
         case .unavailable: "This server does not support scheduled messages yet."
+        case .temporarilyUnavailable: "Scheduled messages are temporarily unavailable. Try again."
         case .files: "Wait for every attachment to finish uploading before scheduling."
         case .content: "Add a message or an attachment, within the message length limit."
         case .time: "Choose a time at least a minute from now and within the next year."
@@ -18,8 +19,11 @@ public enum SchedulingFailure: Error, LocalizedError {
         }
     }
 
-    static func from(_ error: any Error) -> Self {
+    static func from(_ error: any Error, currentContext: Bool) -> Self {
         guard let error = error as? APIError else { return .failed }
+        if error.isMissingRoute, !TransportError.isCancellation(error) {
+            return currentContext ? .temporarilyUnavailable : .sessionChanged
+        }
         switch error.code {
         case .scheduledMessageLimit: return .limit
         case .scheduledMessageSent: return .sent
@@ -80,7 +84,7 @@ extension AppModel {
                 body: ScheduleMessageRequest(
                     attachmentIds: files.isEmpty ? nil : files.map(\.id), content: text, parentId: parent,
                     sendAt: Timestamp(date)))
-        } catch { throw SchedulingFailure.from(error) }
+        } catch { throw SchedulingFailure.from(error, currentContext: context == contextGeneration) }
         guard context == contextGeneration else { throw SchedulingFailure.sessionChanged }
         scheduledGeneration += 1
         scheduledLoading = false
@@ -123,7 +127,7 @@ extension AppModel {
         let context = contextGeneration
         do {
             try await api.cancelScheduledMessage(channelId: message.channelId.value, scheduledId: message.id.value)
-        } catch { throw SchedulingFailure.from(error) }
+        } catch { throw SchedulingFailure.from(error, currentContext: context == contextGeneration) }
         guard context == contextGeneration else { throw SchedulingFailure.sessionChanged }
         scheduledGeneration += 1
         scheduledLoading = false
@@ -137,7 +141,7 @@ extension AppModel {
         do {
             _ = try await api.sendScheduledMessage(
                 channelId: message.channelId.value, scheduledId: message.id.value)
-        } catch { throw SchedulingFailure.from(error) }
+        } catch { throw SchedulingFailure.from(error, currentContext: context == contextGeneration) }
         guard context == contextGeneration else { throw SchedulingFailure.sessionChanged }
         scheduledGeneration += 1
         scheduledLoading = false

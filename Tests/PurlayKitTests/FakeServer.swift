@@ -29,6 +29,7 @@ final class FakeServer: HTTPTransport {
         var reminders: [MessageReminder] = []
         var reminderError: (status: Int, code: String)?
         var reminderDelay = 0
+        var beforeReminderResponse: (@Sendable () async -> Void)?
         var scheduled: [ScheduledMessage] = []
         var scheduledError: (status: Int, code: String)?
         var scheduledDelay = 0
@@ -279,6 +280,7 @@ final class FakeServer: HTTPTransport {
         }
         if path.contains("/reminder") {
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeReminderResponse?()
             if snapshot.reminderDelay > 0 { try await Task.sleep(for: .milliseconds(snapshot.reminderDelay)) }
             if let error = snapshot.reminderError {
                 return json(error.status, "{\"error\":{\"code\":\"\(error.code)\",\"message\":\"x\"}}")
