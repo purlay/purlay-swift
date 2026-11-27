@@ -149,6 +149,26 @@ struct SessionManagerTests {
         #expect(await p.manager.cookie == nil)
     }
 
+    @Test("an older actor's expiry or terminal signal preserves a replacement credential", arguments: [false, true])
+    func replacementSurvivesLocalEnd(expired: Bool) async throws {
+        let p = parts()
+        try p.store.save(session("old", ends: 60), for: server)
+        try await p.manager.restore(for: server)
+        let replacement = session("replacement")
+        try p.store.save(replacement, for: server)
+
+        if expired {
+            p.clock.advance(60)
+            await p.manager.checkExpiry()
+        } else {
+            await p.manager.sessionEndedByServer()
+        }
+
+        #expect(await p.manager.state == .signedOut(expired ? .expired : .endedByServer))
+        #expect(try p.store.load(for: server) == replacement)
+        #expect(p.calls.all.isEmpty)
+    }
+
     @Test(
         "the server ending the session signs out, keeps the credential out of the keychain, and keeps what the person made"
     )

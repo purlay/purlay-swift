@@ -20,6 +20,7 @@ struct SignOutLifetimeTests {
         try h.sessions.save(replacement, for: address)
         await h.model.connect()
         #expect(h.model.phase == .ready)
+        let replacementOwner = try #require(h.model.environment.owner.load())
         let channel = Uuid(channel(1))!
         h.model.setDraft("replacement draft", for: channel)
 
@@ -28,6 +29,7 @@ struct SignOutLifetimeTests {
         #expect(h.model.phase == .ready)
         #expect(h.model.draft(for: channel) == "replacement draft")
         #expect(try h.sessions.load(for: address) == replacement)
+        #expect(h.model.environment.owner.load() == replacementOwner)
         let logoutRequests = h.server.requests.filter { $0.url.path == "/auth/logout" }
         #expect(logoutRequests.map { $0.headers["Cookie"] } == ["__Host-purlay_session=\(original.cookie)"])
     }

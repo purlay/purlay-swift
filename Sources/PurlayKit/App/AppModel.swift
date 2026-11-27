@@ -579,12 +579,11 @@ public final class AppModel {
         return SessionManager(
             store: environment.sessions, owner: environment.owner, wipers: [], now: environment.clock,
             endSignedInSession: { [weak self] scope, session, manager in
-                var configuration = APIConfiguration(
+                let configuration = APIConfiguration(
                     baseURL: address.origin, clientHeader: header,
                     sessionCookie: { await manager.cookie == session.cookie ? session.cookie : nil },
                     onSessionRejected: { await manager.sessionEndedByServer(matching: session.cookie, for: address) },
                     onProblem: { [weak self] problem in await self?.recordProblem(problem) })
-                configuration.followsRedirects = false
                 let api = PurlayAPI(client: APIClient(configuration: configuration, transport: transport, sleep: sleep))
                 switch scope {
                 case .thisDevice: try await api.logout()

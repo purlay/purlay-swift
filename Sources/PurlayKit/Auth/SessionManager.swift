@@ -122,7 +122,7 @@ public actor SessionManager {
             return state
         }
         if let end = session.expiresAt, end <= now() {
-            try? store.delete(for: server)
+            _ = try? store.delete(ifMatching: session, for: server)
             move(to: .signedOut(.expired))
         } else {
             move(to: .signedIn(session, server: server))
@@ -148,9 +148,8 @@ public actor SessionManager {
     /// The server ended the session. Nothing the person made is removed: the draft and the outbox wait for the next
     /// sign-in, which is the same person's or is found out by `identify`.
     public func sessionEndedByServer() {
-        guard case .signedIn(_, let server) = state else { return }
-        try? store.delete(for: server)
-        move(to: .signedOut(.endedByServer))
+        guard case .signedIn(let session, let server) = state else { return }
+        sessionEndedByServer(matching: session.cookie, for: server)
     }
 
     /// Retires only the credential that received the server's terminal signal. No logout is sent.
@@ -171,7 +170,7 @@ public actor SessionManager {
     /// The session's time passed while the app ran.
     public func checkExpiry() {
         guard case .signedIn(let session, let server) = state, let end = session.expiresAt, end <= now() else { return }
-        try? store.delete(for: server)
+        _ = try? store.delete(ifMatching: session, for: server)
         move(to: .signedOut(.expired))
     }
 
