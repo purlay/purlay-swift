@@ -122,12 +122,12 @@ struct AttentionModelTests {
     }
 
     @Test("several that rose together, read again after a gap, are one notice")
-    func several() async {
+    func several() async throws {
         let h = await signedIn()
         h.model.setActive(false)
         h.server.edit { $0.chans = [.init(n: 1, name: "api", mentions: 1), .init(n: 2, name: "design", mentions: 2)] }
         h.last.handlers.message(Wire.channelsUpdated(FakeServer.workspaceID, version: 20))
-        await h.settle()
+        try #require(await eventually { !h.attention.shown.isEmpty })
         #expect(h.attention.shown == [AttentionNotice(id: "several", content: .several(count: 2))])
         #expect(h.attention.badge == 3)
     }
@@ -142,12 +142,12 @@ struct AttentionModelTests {
     @Test(
         "a conversation that is new to the person, with a message waiting, is a notice; the people are named, never what was said"
     )
-    func newConversation() async {
+    func newConversation() async throws {
         let h = await signedIn()
         h.model.setActive(false)
         h.server.edit { $0.chans.append(.init(n: 8, name: nil, type: "direct_message", peerName: "Bob", mentions: 1)) }
         h.last.handlers.message(Wire.channelsUpdated(FakeServer.workspaceID, version: 21))
-        await h.settle()
+        try #require(await eventually { !h.attention.shown.isEmpty })
         #expect(
             h.attention.shown == [
                 AttentionNotice(
