@@ -573,24 +573,24 @@ public final class AppModel {
     // MARK: The session
 
     private func makeManager(for address: ServerAddress) -> SessionManager {
-        let client = environment.transport
-        let version = environment.appVersion
+        let transport = environment.transport
+        let sleep = environment.sleep
+        let header = ClientHeader.value(appVersion: environment.appVersion, platform: environment.platform)
         return SessionManager(
             store: environment.sessions, owner: environment.owner, wipers: [], now: environment.clock,
-            endSession: { [weak self] scope in
-                guard let self else { return }
-                try await self.endServerSession(scope, client: client, version: version, address: address)
+            endSignedInSession: { [weak self] scope, session, manager in
+                var configuration = APIConfiguration(
+                    baseURL: address.origin, clientHeader: header,
+                    sessionCookie: { await manager.cookie == session.cookie ? session.cookie : nil },
+                    onSessionRejected: { await manager.sessionEndedByServer(matching: session.cookie, for: address) },
+                    onProblem: { [weak self] problem in await self?.recordProblem(problem) })
+                configuration.followsRedirects = false
+                let api = PurlayAPI(client: APIClient(configuration: configuration, transport: transport, sleep: sleep))
+                switch scope {
+                case .thisDevice: try await api.logout()
+                case .everywhere: try await api.logoutEverywhere()
+                }
             })
-    }
-
-    private func endServerSession(
-        _ scope: SignOutScope, client: any HTTPTransport, version: SemanticVersion, address: ServerAddress
-    ) async throws {
-        guard let api else { throw TransportError.noSession }
-        switch scope {
-        case .thisDevice: try await api.logout()
-        case .everywhere: try await api.logoutEverywhere()
-        }
     }
 
     private func resumeOrAskToSignIn(_ address: ServerAddress) async {
@@ -641,7 +641,10 @@ public final class AppModel {
         observation = Task { @MainActor [weak self] in
             for await state in await manager.states() {
                 guard let self, !Task.isCancelled, self.manager === manager, cookieCache == cookie else { return }
-                if case .signedOut(let reason) = state, phase == .ready || phase == .loading { sessionEnded(reason) }
+                if case .signedOut(let reason) = state, phase == .ready || phase == .loading {
+                    if hasActiveSignOut && (reason == .signedOutByPerson || reason == .signedOutEverywhere) { continue }
+                    sessionEnded(reason)
+                }
             }
         }
     }
@@ -673,6 +676,7 @@ public final class AppModel {
         signOutRequests[context, default: 0] += 1
         defer { finishSignOutRequest(context) }
         let result = await manager.signOut(scope)
+        guard self.manager === manager, contextGeneration == context, sessionScope == ended else { return result }
         switch result {
         case .done: break
         case .serverNotTold: say(.serverNotTold)
