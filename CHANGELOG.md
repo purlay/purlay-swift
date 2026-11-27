@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Dismiss Threads, Saved Messages, Open Topics, Scheduled Messages, Reminders and Pins if a server node does not serve
+  their Chat read route. Keep the session, existing system alarms and later requests available.
+
 ## 0.3.0 — 2026-11-27
 
 - Generate route, client operation and server event owners from the pinned contract. Use the generated ownership when pausing Chat socket operations.
