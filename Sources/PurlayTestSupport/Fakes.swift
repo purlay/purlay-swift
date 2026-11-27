@@ -37,6 +37,15 @@ public final class InMemorySessionStore: SessionStore {
             $0.sessions[server.description] = nil
         }
     }
+
+    public func delete(ifMatching session: StoredSession, for server: ServerAddress) throws -> Bool {
+        try state.withLock {
+            guard $0.sessions[server.description] == session else { return false }
+            if $0.deleteFails { throw KeychainError(status: -25291, operation: "delete") }
+            $0.sessions[server.description] = nil
+            return true
+        }
+    }
 }
 
 /// Answers the sign-in page as a script says: with the callback, or with the person closing it.

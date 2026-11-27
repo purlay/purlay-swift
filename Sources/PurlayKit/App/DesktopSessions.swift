@@ -222,15 +222,17 @@ public final class DesktopSessions {
             guard let self, let model, let origin = model.origin, let user = model.me?.user.id else { return [] }
             return self.sessions.map(\.model).filter { $0 !== model && $0.origin == origin && $0.me?.user.id == user }
         }
-        model.onSessionEnded = { [weak self, weak model, weak session] in
+        model.onSessionEnded = { [weak self, weak model, weak session] ended in
             guard let self, let model, let session else { return }
             if self.pendingLink?.server == model.origin || self.pendingLink?.server == model.server {
                 self.pendingLink = nil
                 self.linkGeneration += 1
             }
-            for other in self.sessions where other.model !== model && other.model.origin == model.origin {
-                other.model.invalidateLocalSession()
-                self.attention.clear(other.id.uuidString)
+            if let ended {
+                for other in self.sessions where other.model !== model && other.model.sessionScope == ended {
+                    other.model.invalidateLocalSession()
+                    self.attention.clear(other.id.uuidString)
+                }
             }
             self.attention.clear(session.id.uuidString)
         }
