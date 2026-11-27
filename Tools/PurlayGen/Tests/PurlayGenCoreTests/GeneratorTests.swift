@@ -22,6 +22,61 @@ struct GeneratorTests {
             Generator.generate(contract: data, source: "test", idempotent: idempotent).kitFiles["PurlayAPI.swift"])
     }
 
+    private func ownershipContract(frameOwners: String = #"{"FIND":"notes"}"#) -> Data {
+        Data(
+            #"""
+            {
+              "schemas": {
+                "ModuleId": {"anyOf":[{"const":"chat","type":"string"},{"const":"notes","type":"string"}]},
+                "Find": {"type":"object","required":["op"],"properties":{"op":{"const":"FIND","type":"string"}}},
+                "More": {"type":"object","required":["op"],"properties":{"op":{"const":"MORE","type":"string"}}},
+                "ClientFrame": {"anyOf":[{"$ref":"Find"},{"$ref":"More"}]}
+              },
+              "endpoints":[{"id":"getMe","path":"/api/me","method":"GET","auth":"session","module":"core","responses":{"204":null}}],
+              "modules":[
+                {"id":"chat","requires":[],"optional":[],"routes":[],"frames":[],"events":[],"notificationTypes":[]},
+                {"id":"notes","requires":["chat"],"optional":[],"routes":["/api/notes/**"],
+                 "frames":["FIND","MORE"],"events":["NOTE_CREATED"],"notificationTypes":["note_mention"]}
+              ],
+              "frameOwners":\#(frameOwners),"eventOwners":{"NOTE_CREATED":"notes"},
+              "constants":{},"errorStatus":{},"closeCodes":{}
+            }
+            """#.utf8)
+    }
+
+    @Test("generates the bundle's owners and derives typed frame cases from wire tags")
+    func moduleOwnership() throws {
+        let contract = ownershipContract(frameOwners: #"{"MORE":"notes","FIND":"notes"}"#)
+        let text = try #require(
+            Generator.generate(contract: contract, source: "test", idempotent: []).files["ModuleOwnership.swift"])
+        #expect(text.contains(#""getMe": .core"#))
+        #expect(text.contains(#""FIND": .module(ModuleId(rawValue: "notes"))"#))
+        #expect(text.contains(#""NOTE_CREATED": .module(ModuleId(rawValue: "notes"))"#))
+        #expect(text.contains(#"requires: [ModuleId(rawValue: "chat")]"#))
+        #expect(text.contains(#"routes: ["/api/notes/**"]"#))
+        #expect(text.contains(#"notificationTypes: ["note_mention"]"#))
+        #expect(text.contains(#"case .find: ModuleOwnership.frameOwners["FIND"]"#))
+        #expect(text.contains("case .unknown: nil"))
+        #expect(
+            try Generator.generate(contract: self.contract(""), source: "test", idempotent: []).files[
+                "ModuleOwnership.swift"] == nil)
+    }
+
+    @Test("refuses missing or undeclared owners")
+    func malformedOwnership() {
+        #expect { _ = try Generator.generate(contract: ownershipContract(), source: "test", idempotent: []) } throws: {
+            error in
+            "\(error)".contains("frameOwners has no owner for MORE")
+        }
+        #expect {
+            _ = try Generator.generate(
+                contract: ownershipContract(frameOwners: #"{"FIND":"ghost","MORE":"notes"}"#), source: "test",
+                idempotent: [])
+        } throws: { error in
+            "\(error)".contains("frameOwners.FIND refers to undeclared module ghost")
+        }
+    }
+
     @Test("an object becomes a struct that decodes what is required and reads the rest if present")
     func structure() throws {
         let text = try models(

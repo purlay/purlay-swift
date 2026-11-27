@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Generate route, client operation and server event owners from the pinned contract. Use the generated ownership when pausing Chat socket operations.
+
 ## 0.2.2 — 2026-11-27
 
 - Hold waiting composer sends during sign-out. Resume them if the server refuses sign-out and discard them when the local session ends.
