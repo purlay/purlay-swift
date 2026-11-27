@@ -104,6 +104,9 @@ final class FakeServer: HTTPTransport {
         var threads: [String: [Message]] = [:]
         var threadPageSize: Int?
         var threadStatus = 200
+        var threadErrorCode = "INTERNAL"
+        var threadErrorOnCursor = false
+        var beforeThreadResponse: (@Sendable () async -> Void)?
         var messagesStatus = 200
         var messagesErrorCode = "INTERNAL"
         var threadDelays: [String: Int] = [:]
@@ -444,13 +447,14 @@ final class FakeServer: HTTPTransport {
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
             let id = String(path.dropFirst("/api/messages/".count).dropLast("/thread".count))
             if let wait = snapshot.threadDelays[id] { try? await Task.sleep(for: .milliseconds(wait)) }
-            if snapshot.threadStatus != 200 {
-                return json(snapshot.threadStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
-            }
-            var items = snapshot.threads[id] ?? []
+            await snapshot.beforeThreadResponse?()
             let after = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems?.first {
                 $0.name == "after"
             }?.value
+            if snapshot.threadStatus != 200, !snapshot.threadErrorOnCursor || after != nil {
+                return json(snapshot.threadStatus, #"{"error":{"code":"\#(snapshot.threadErrorCode)","message":"x"}}"#)
+            }
+            var items = snapshot.threads[id] ?? []
             if let after { items = items.filter { $0.id.value > after } }
             let size = snapshot.threadPageSize ?? 100
             let page = Array(items.prefix(size))
