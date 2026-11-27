@@ -35,13 +35,15 @@ public enum Generator {
         }
         let head = header(source: source)
         let names = declarations.map(\.name) + Resolver.primitives.sorted()
+        var files = [
+            "Models.swift": head + models.text,
+            "Constants.swift": try Tables.constants(root, header: head),
+            "Endpoints.swift": try Tables.endpoints(root, header: head),
+            "Registry.swift": Tables.registry(names: names, header: head),
+        ]
+        files["ModuleOwnership.swift"] = try ModuleTables.generate(root, declarations: declarations, header: head)
         return GeneratedFiles(
-            files: [
-                "Models.swift": head + models.text,
-                "Constants.swift": try Tables.constants(root, header: head),
-                "Endpoints.swift": try Tables.endpoints(root, header: head),
-                "Registry.swift": Tables.registry(names: names, header: head),
-            ],
+            files: files,
             kitFiles: [
                 "PurlayAPI.swift": try Tables.api(root, header: head, idempotent: idempotent ?? Tables.idempotent)
             ])

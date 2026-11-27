@@ -11,7 +11,10 @@ extension AppModel {
         navigationGeneration += 1
         closePages(except: .inbox)
         inboxOpen = true
-        await reloadInbox()
+        if inboxCategory != .updates {
+            await reloadInbox()
+            guard inboxOpen, inboxCategory != .updates, inboxStatus != .idle else { return }
+        }
         await reloadUpdates()
     }
 
@@ -36,10 +39,7 @@ extension AppModel {
         inboxGeneration += 1
         let generation = inboxGeneration
         inboxStatus = .loading
-        inboxLoadingMore = false
-        inboxNotes = []
-        inboxCursor = nil
-        rebuildInbox()
+        resetInboxResults()
         do {
             let page = try await readInboxPage(
                 api: api,
@@ -49,12 +49,20 @@ extension AppModel {
                     workspaceId: workspace.id))
             // An answer to a look the person has since changed, or left, is not used.
             guard generation == inboxGeneration else { return }
+            try Task.checkCancellation()
             inboxNotes = page.data
             inboxCursor = page.nextCursor
             inboxStatus = .loaded
         } catch {
             guard generation == inboxGeneration else { return }
-            inboxStatus = .failed
+            if TransportError.isCancellation(error) {
+                inboxStatus = .idle
+            } else if (error as? APIError)?.isMissingRoute == true {
+                dismissChatInbox()
+                return
+            } else {
+                inboxStatus = .failed
+            }
         }
         rebuildInbox()
     }
@@ -75,12 +83,17 @@ extension AppModel {
                     unreadOnly: inboxFilter == .unread,
                     workspaceId: workspace.id))
             guard generation == inboxGeneration else { return }
+            try Task.checkCancellation()
             inboxNotes += page.data
             inboxCursor = page.nextCursor
             rebuildInbox()
         } catch {
-            guard generation == inboxGeneration else { return }
-            say(.loadFailed)
+            guard generation == inboxGeneration, !TransportError.isCancellation(error) else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                dismissChatInbox()
+            } else {
+                say(.loadFailed)
+            }
         }
     }
 
@@ -142,14 +155,24 @@ extension AppModel {
     }
 
     func clearInbox() {
-        inboxGeneration += 1
-        inboxOpen = false
         inboxFilter = .all
         inboxCategory = .all
+        dismissChatInbox()
+        clearUpdates()
+    }
+
+    private func dismissChatInbox() {
+        inboxGeneration += 1
+        // Updates belongs to the core and may have been selected while the Chat read was in flight.
+        if inboxCategory != .updates { inboxOpen = false }
         inboxStatus = .idle
+        resetInboxResults()
+    }
+
+    private func resetInboxResults() {
+        inboxLoadingMore = false
         inboxNotes = []
         inboxCursor = nil
         inboxRows = []
-        clearUpdates()
     }
 }

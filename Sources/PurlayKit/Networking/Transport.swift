@@ -57,6 +57,10 @@ public enum TransportError: Error, Sendable, Equatable {
     /// A request the app could not build: a path parameter is missing or a query cannot be spelled.
     case malformedRequest(String)
 
+    static func isCancellation(_ error: any Error) -> Bool {
+        Task.isCancelled || error is CancellationError || (error as? Self) == .cancelled
+    }
+
     /// Whether a read may try again: the network or the server was briefly away.
     public var isTransient: Bool {
         switch self {

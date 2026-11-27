@@ -43,6 +43,7 @@ final class FakeServer: HTTPTransport {
         var pins: [String: [String]] = [:]
         var pinError: (status: Int, code: String)?
         var searchStatus = 200
+        var searchErrorCode = "INTERNAL"
         var unresolvedStatus = 200
         var unresolvedPageSize = 20
         var unresolvedDelay = 0
@@ -77,6 +78,7 @@ final class FakeServer: HTTPTransport {
         var awayStatus = 200
         var inboxReads: [MarkInboxReadRequest] = []
         var notificationsStatus = 200
+        var notificationsErrorCode = "INTERNAL"
         var notificationTypeFiltering = true
         var notificationQueryValidationField: String?
         var notificationPageSize: Int?
@@ -615,7 +617,9 @@ final class FakeServer: HTTPTransport {
                 try? await Task.sleep(for: .milliseconds(wait))
             }
             if snapshot.notificationsStatus != 200 {
-                return json(snapshot.notificationsStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(
+                    snapshot.notificationsStatus,
+                    #"{"error":{"code":"\#(snapshot.notificationsErrorCode)","message":"x"}}"#)
             }
             let types = items.first { $0.name == "types" }?.value
             if types != nil && !snapshot.notificationTypeFiltering {
@@ -679,7 +683,7 @@ final class FakeServer: HTTPTransport {
             let q = items.first { $0.name == "q" }?.value ?? ""
             if let wait = snapshot.searchDelays[q] { try await Task.sleep(for: .milliseconds(wait)) }
             if snapshot.searchStatus != 200 {
-                return json(snapshot.searchStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(snapshot.searchStatus, #"{"error":{"code":"\#(snapshot.searchErrorCode)","message":"x"}}"#)
             }
             let filtered = items.contains { !["q", "before", "limit"].contains($0.name) }
             if (q.isEmpty && !filtered) || (!q.isEmpty && q.count < 3) || q.count > 200 {

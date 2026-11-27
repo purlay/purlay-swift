@@ -165,12 +165,7 @@ public final class Connection {
 
     private func write(_ frame: ClientFrame) -> Bool {
         guard status == .open, let socket else { return false }
-        if chatOperationsUnavailable {
-            switch frame {
-            case .subscribe, .unsubscribe, .messageSend, .typing: return false
-            default: break
-            }
-        }
+        if chatOperationsUnavailable, frame.moduleOwner == .module(.chat) { return false }
         guard let data = try? JSONEncoder().encode(frame), data.count <= ContractConstants.maxFrameBytes,
             let text = String(data: data, encoding: .utf8)
         else { return false }

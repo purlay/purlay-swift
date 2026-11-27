@@ -379,6 +379,25 @@ struct FramesTests {
         #expect(try JSONDecoder().decode(ClientFrame.self, from: Data(sent.utf8)) == frame)
     }
 
+    @Test("pausing chat stops a chat-owned write and keeps core and unknown writes")
+    func sendsWhileChatIsPaused() throws {
+        let h = Harness()
+        let socket = h.openOne()
+        h.connection.pauseChatOperations()
+        let core = ClientFrame.ping(PingFrame(id: idAt(0), payload: .init()))
+        let chat = ClientFrame.subscribe(SubscribeFrame(id: idAt(1), payload: .init(channels: [])))
+        let future = ClientFrame.unknown(opTag: "FROM_THE_FUTURE", payload: .object(["op": .string("FROM_THE_FUTURE")]))
+        let before = socket.sent.count
+
+        #expect(!h.connection.send(chat))
+        #expect(h.connection.send(core))
+        #expect(h.connection.send(future))
+        let sent = try socket.sent.dropFirst(before).map {
+            try JSONDecoder().decode(ClientFrame.self, from: Data($0.utf8))
+        }
+        #expect(sent == [core, future])
+    }
+
     @Test("a frame over the bound is never sent, and says so")
     func oversized() {
         let h = Harness()

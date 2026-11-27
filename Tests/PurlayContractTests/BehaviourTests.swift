@@ -56,6 +56,32 @@ struct BehaviourTests {
 
     // MARK: What the contract promises
 
+    @Test("published ownership covers the routes, wire operations and events")
+    func moduleOwnership() throws {
+        #expect(Set(ModuleOwnership.endpointOwners.keys) == Set(Endpoints.all.map(\.id)))
+        #expect(Endpoints.getMe.moduleOwner == .core)
+        #expect(Endpoints.listNotifications.moduleOwner == .module(.chat))
+        #expect(ModuleOwnership.endpointOwners["missing"] == nil)
+        let chat = try #require(ModuleOwnership.modules[.chat])
+        #expect(chat.routes.contains("/api/notifications"))
+        #expect(chat.frames.allSatisfy { ModuleOwnership.frameOwners[$0] == .module(.chat) })
+        #expect(chat.events.allSatisfy { ModuleOwnership.eventOwners[$0] == .module(.chat) })
+        #expect(ModuleOwnership.modules[.issues]?.notificationTypes.contains("issue_assigned") == true)
+        #expect(ModuleOwnership.modules[.unknown("notes")] == nil)
+
+        let id = "0199155c-6200-7b7f-8c11-2a4d3f9e1b70"
+        let ping = try decode(ClientFrame.self, #"{"op":"PING","id":"\#(id)","payload":{}}"#)
+        let subscribe = try decode(ClientFrame.self, #"{"op":"SUBSCRIBE","id":"\#(id)","payload":{"channels":[]}}"#)
+        let ack = try decode(ServerFrame.self, #"{"event":"ACK","data":{"id":"\#(id)"},"ts":1}"#)
+        let futureOp = try decode(ClientFrame.self, #"{"op":"FUTURE_OP","id":"\#(id)","payload":{}}"#)
+        let futureEvent = try decode(ServerFrame.self, #"{"event":"FUTURE_EVENT","data":{},"ts":1}"#)
+        #expect(ping.moduleOwner == .core)
+        #expect(subscribe.moduleOwner == .module(.chat))
+        #expect(ack.moduleOwner == .core)
+        #expect(futureOp.moduleOwner == nil)
+        #expect(futureEvent.moduleOwner == nil)
+    }
+
     @Test("a required field that is missing is an error that names it")
     func missingRequired() throws {
         #expect(throws: DecodingError.self) {

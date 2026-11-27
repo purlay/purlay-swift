@@ -66,6 +66,98 @@ struct InboxModelTests {
         #expect(query(request, "unreadOnly") == "false")
     }
 
+    @Test(
+        "a closed Chat route dismisses notifications without losing the session or core Updates",
+        arguments: [false, true])
+    func closedChatRoute(paging: Bool) async {
+        let h = await opened(three, pageSize: 1)
+        await h.model.openInbox()
+        #expect(h.model.inboxHasMore)
+        #expect(h.model.updatesStatus == .loaded)
+        let before = lists(h).count
+        h.server.edit {
+            $0.notificationsStatus = 404
+            $0.notificationsErrorCode = "ROUTE_NOT_FOUND"
+        }
+        if paging { await h.model.loadMoreInbox() } else { await h.model.openInbox() }
+        #expect(lists(h).count == before + 1)
+        #expect(h.model.phase == .ready)
+        #expect(h.model.chatAvailable)
+        #expect(!h.model.inboxOpen)
+        #expect(h.model.inboxStatus == .idle)
+        #expect(h.model.inboxRows.isEmpty)
+        #expect(!h.model.inboxHasMore)
+        #expect(!h.model.inboxLoadingMore)
+        #expect(h.model.updatesStatus == .loaded)
+        #expect(!h.model.notices.contains { $0.kind == .loadFailed })
+
+        h.server.edit { $0.notificationsStatus = 200 }
+        await h.model.openInbox()
+        #expect(h.model.inboxOpen)
+        #expect(h.model.inboxStatus == .loaded)
+        #expect(h.model.inboxRows.map(\.message.id) == [idAt(3)])
+    }
+
+    @Test("other refusals still leave the Inbox open and report failure")
+    func genuineReadFailure() async {
+        for (status, code) in [(403, "FORBIDDEN"), (404, "MESSAGE_NOT_FOUND"), (403, "ROUTE_NOT_FOUND")] {
+            let h = await opened(three)
+            h.server.edit {
+                $0.notificationsStatus = status
+                $0.notificationsErrorCode = code
+            }
+            await h.model.openInbox()
+            #expect(h.model.inboxOpen)
+            #expect(h.model.inboxStatus == .failed)
+            #expect(h.model.phase == .ready)
+        }
+    }
+
+    @Test("cancelling the next page keeps the Inbox and its cursor without reporting failure")
+    func cancelPaging() async {
+        let h = await opened(three, pageSize: 1)
+        await h.model.openInbox()
+        let before = lists(h).count
+        h.server.edit {
+            $0.notificationsStatus = 404
+            $0.notificationsErrorCode = "ROUTE_NOT_FOUND"
+            $0.notificationDelays["false"] = 250
+        }
+        let page = Task { await h.model.loadMoreInbox() }
+        #expect(await eventually { lists(h).count == before + 1 })
+        page.cancel()
+        await page.value
+        #expect(h.model.inboxOpen)
+        #expect(h.model.inboxStatus == .loaded)
+        #expect(h.model.inboxRows.map(\.message.id) == [idAt(3)])
+        #expect(h.model.inboxHasMore)
+        #expect(!h.model.inboxLoadingMore)
+        #expect(!h.model.notices.contains { $0.kind == .loadFailed })
+    }
+
+    @Test("a late closed Chat answer leaves core Updates open and reopening Updates only reads the core")
+    func closedChatWithUpdates() async {
+        let h = await opened(three)
+        h.server.edit {
+            $0.notificationsStatus = 404
+            $0.notificationsErrorCode = "ROUTE_NOT_FOUND"
+            $0.notificationDelays["false"] = 250
+        }
+        let opening = Task { await h.model.openInbox() }
+        #expect(await eventually { lists(h).count == 1 })
+        await h.model.setInboxCategory(.updates)
+        await opening.value
+        #expect(h.model.inboxOpen)
+        #expect(h.model.inboxCategory == .updates)
+        #expect(h.model.updatesStatus == .loaded)
+        #expect(h.model.inboxStatus == .idle)
+        h.model.inboxOpen = false
+        await h.model.openInbox()
+        #expect(h.model.inboxOpen)
+        #expect(h.model.updatesStatus == .loaded)
+        #expect(lists(h).count == 1)
+    }
+
     @Test("Unread is asked of the server, so what waits is found however old, and All asks again")
     func filters() async throws {
         let h = await opened(three)
