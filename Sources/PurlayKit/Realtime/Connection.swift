@@ -138,6 +138,9 @@ public final class Connection {
     private var queue: [String] = []
     private var inFlight: (id: Uuid, channelIDs: [String])?
     private var limitedTimes = 0
+    /// Unsubscribes do not block the queue. Keep recent references only if a peer never answers them.
+    static let unsubscribeReferenceLimit = 64
+    private var unsubscribeReferences: [Uuid] = []
 
     public init(_ options: Options) {
         self.options = options
@@ -161,6 +164,7 @@ public final class Connection {
         cancelBeat = nil
         cancelResend = nil
         inFlight = nil
+        unsubscribeReferences.removeAll()
     }
 
     private func write(_ frame: ClientFrame) -> Bool {
@@ -169,6 +173,10 @@ public final class Connection {
         guard let data = try? JSONEncoder().encode(frame), data.count <= ContractConstants.maxFrameBytes,
             let text = String(data: data, encoding: .utf8)
         else { return false }
+        if case .unsubscribe(let command) = frame {
+            if unsubscribeReferences.count == Self.unsubscribeReferenceLimit { unsubscribeReferences.removeFirst() }
+            unsubscribeReferences.append(command.id)
+        }
         socket.send(text)
         return true
     }
@@ -212,8 +220,17 @@ public final class Connection {
         _ = write(.subscribe(SubscribeFrame(id: id, payload: .init(channels: channels))))
     }
 
-    /// The answer to the chunk on the wire: go on, or send it again after a wait.
+    /// Retire answered unsubscribes, then advance or reschedule the pending subscription chunk.
     private func answered(_ frame: ServerFrame) {
+        if let reference = frame.refID, let index = unsubscribeReferences.firstIndex(of: reference) {
+            switch frame {
+            case .ack(.unsubscribed): unsubscribeReferences.remove(at: index)
+            case .error(let error):
+                unsubscribeReferences.remove(at: index)
+                if error.refusesOperation { pauseChatOperations() }
+            default: break
+            }
+        }
         guard let flight = inFlight, frame.refID == flight.id else { return }
         switch frame {
         case .ack(.subscribed):
@@ -249,6 +266,7 @@ public final class Connection {
     func pauseChatOperations() {
         chatOperationsUnavailable = true
         inFlight = nil
+        unsubscribeReferences.removeAll()
         queue.removeAll()
         cancelResend?()
         cancelResend = nil
@@ -295,6 +313,7 @@ public final class Connection {
         cancelBeat = nil
         cancelResend = nil
         inFlight = nil
+        unsubscribeReferences.removeAll()
         setStatus(.waiting)
         let wait = ReconnectBackoff.delay(attempt: failures, draw: options.random())
         cancelRetry = options.schedule(Self.milliseconds(wait)) { [weak self] in self?.connect() }

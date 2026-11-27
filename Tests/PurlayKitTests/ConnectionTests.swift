@@ -285,6 +285,52 @@ struct ReplayByCursorTests {
         #expect(frames.flatMap(\.channelIds) == many)
     }
 
+    @Test(
+        "an unsubscribe reference expires after an acknowledgement, ordinary failure or lost connection",
+        arguments: [
+            "ack", "error", "reconnect",
+        ])
+    func completedUnsubscribe(completion: String) throws {
+        let h = Harness()
+        h.connection.start()
+        let original = h.last
+        original.handlers.opened()
+        h.connection.watch(channel(1))
+        h.connection.unwatch([channel(1)])
+        let reference = try #require(h.frames(of: original, op: "UNSUBSCRIBE").last?.id)
+        switch completion {
+        case "ack":
+            original.handlers.message(
+                #"{"event":"ACK","ts":1,"refId":"\#(reference)","data":{"channelIds":["\#(channel(1))"]}}"#)
+        case "error":
+            original.handlers.message(Wire.operationRefusal(refID: reference, field: "payload"))
+        default:
+            original.handlers.closed(1006)
+            h.advance(1_000)
+            h.last.handlers.opened()
+        }
+        h.last.handlers.message(Wire.operationRefusal(refID: reference))
+        #expect(!h.connection.chatOperationsUnavailable)
+        #expect(h.connection.status == .open)
+    }
+
+    @Test("unanswered unsubscribe references have a bound and the newest refusal still pauses Chat")
+    func boundedUnsubscribeReferences() {
+        let h = Harness()
+        h.connection.start()
+        h.last.handlers.opened()
+        let channelID = Uuid(channel(1))!
+        let ids = (1...Connection.unsubscribeReferenceLimit + 1).map { idAt(10_000 + $0) }
+        for id in ids {
+            let unsubscribe = UnsubscribeFrame(id: id, payload: .init(channelIds: [channelID]))
+            #expect(h.connection.send(.unsubscribe(unsubscribe)))
+        }
+        h.last.handlers.message(Wire.operationRefusal(refID: ids[0].value))
+        #expect(!h.connection.chatOperationsUnavailable)
+        h.last.handlers.message(Wire.operationRefusal(refID: ids[ids.count - 1].value))
+        #expect(h.connection.chatOperationsUnavailable)
+    }
+
     @Test("a channel the server already let go is forgotten without a frame, and not subscribed again")
     func forgetWithoutFrame() {
         let h = Harness()

@@ -258,6 +258,32 @@ struct RefusedSubscriptionTests {
         #expect(h.lost.isEmpty)
     }
 
+    @Test("a closed UNSUBSCRIBE pauses Chat and holds unsent messages without interrupting the core socket")
+    func unsubscribePaused() throws {
+        let h = EngineHarness()
+        h.engine.watch([one, two])
+        let socket = h.openOne()
+        h.answerSubscribe()
+        let pending = h.engine.send(Outgoing(channelID: two, content: "unsent"))
+        h.engine.watch([two])
+        let unsubscribe = try #require(h.unsubscribes(socket).last)
+        socket.handlers.message(Wire.operationRefusal(refID: idAt(10_000).value))
+        #expect(!h.engine.chatOperationsUnavailable)
+
+        socket.handlers.message(Wire.operationRefusal(refID: unsubscribe.id))
+        h.advance(4_000)
+        #expect(h.engine.chatOperationsUnavailable)
+        #expect(h.engine.status == .open && !socket.closedByClient)
+        #expect(h.engine.degraded.isEmpty && h.lost.isEmpty)
+        #expect(h.engine.pending.map(\.id) == [pending])
+        #expect(h.engine.pending.first?.delivery == .sending)
+        let subscriptions = h.subscribes(socket).count
+        h.engine.watch([one, two])
+        #expect(h.subscribes(socket).count == subscriptions)
+        h.engine.announceActive(workspace: one)
+        #expect(socket.sent.contains { $0.contains(#""op":"ACTIVE""#) })
+    }
+
     @Test("the HTTP fallback holds an unsent message if the node does not serve the send route")
     func httpSendPaused() async {
         let h = EngineHarness()
