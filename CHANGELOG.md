@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+## 0.2.2 — 2026-11-27
+
 - Hold waiting composer sends during sign-out. Resume them if the server refuses sign-out and discard them when the local session ends.
+- Include the browser sign-in, optional chat module handling, and rolling deployment fixes from 0.2.1. That tag failed release
+  verification and has no published release.
 
 ## 0.2.1 — 2026-11-27
 
