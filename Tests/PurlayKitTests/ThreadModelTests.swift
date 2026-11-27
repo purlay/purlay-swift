@@ -326,7 +326,7 @@ struct ThreadModelTests {
         #expect((h.model.threadRoot?.thread?.resolvedAt != nil) == resolving)
     }
 
-    @Test("a closed follow route abandons the optimistic status and allows a fresh follow", arguments: [true, false])
+    @Test("a closed follow write restores the last state and keeps the thread open", arguments: [true, false])
     func closedFollowRoute(following: Bool) async {
         let h = await opened()
         h.server.edit { $0.follows[idAt(1_000).value] = !following }
@@ -342,15 +342,84 @@ struct ThreadModelTests {
         await gate.open()
         await action.value
 
-        #expect(h.model.thread == nil)
-        #expect(h.model.threadFollow == .reading)
+        #expect(h.model.thread?.root == root().id)
+        #expect(h.model.threadFollow == .known(!following))
+        #expect(h.model.threadFollowUnavailable)
         #expect(h.model.chatAvailable)
         #expect(!h.model.notices.map(\.kind).contains(.followFailed))
+        await h.model.setFollowing(following)
+        #expect(calls(h, "/follow", method: "PUT").count == 1)
         h.server.edit { $0.threadWriteError = nil }
-        await h.model.openThread(root())
+        await h.model.reloadThread()
         #expect(h.model.threadFollow == .known(!following))
+        #expect(!h.model.threadFollowUnavailable)
         await h.model.setFollowing(following)
         #expect(h.model.threadFollow == .known(following))
+    }
+
+    @Test("a closed follow read keeps replies open and an explicit retry only reads following")
+    func closedFollowRead() async {
+        let h = await opened(replies: [idAt(1_000).value: [reply(2_000)]])
+        h.server.edit {
+            $0.followStatus = 404
+            $0.followErrorCode = .routeNotFound
+        }
+        await h.model.openThread(root())
+        #expect(h.model.thread?.replies.map(\.id) == [reply(2_000).id])
+        #expect(h.model.threadFollowUnavailable)
+        #expect(h.model.threadFollow == .reading)
+        #expect(!h.model.notices.map(\.kind).contains(.followFailed))
+        #expect(calls(h, "/follow").count == 1)
+
+        h.server.edit {
+            $0.followStatus = 200
+            $0.follows[idAt(1_000).value] = true
+        }
+        let threadReads = calls(h, "/thread").count
+        let gate = Gate()
+        h.server.edit { $0.beforeFollowReadResponse = { await gate.wait() } }
+        let retry = Task { await h.model.refreshThreadFollow() }
+        #expect(await eventually { calls(h, "/follow").count == 2 })
+        var duplicateFinished = false
+        let duplicate = Task { @MainActor in
+            await h.model.refreshThreadFollow()
+            duplicateFinished = true
+        }
+        #expect(await eventually { duplicateFinished || calls(h, "/follow").count > 2 })
+        #expect(duplicateFinished)
+        await gate.open()
+        await retry.value
+        await duplicate.value
+        #expect(!h.model.threadFollowUnavailable)
+        #expect(h.model.threadFollow == .known(true))
+        #expect(calls(h, "/follow").count == 2)
+        #expect(calls(h, "/thread").count == threadReads)
+        #expect(calls(h, "/follow", method: "PUT").isEmpty)
+    }
+
+    @Test("a closed follow read from a previous thread leaves the replacement usable")
+    func lateClosedFollowRead() async {
+        let first = root()
+        let second = root(2_000)
+        let h = await opened([first, second])
+        let gate = Gate()
+        h.server.edit {
+            $0.followStatus = 404
+            $0.followErrorCode = .routeNotFound
+            $0.beforeFollowReadResponse = { await gate.wait() }
+        }
+        let delayed = Task { await h.model.openThread(first) }
+        #expect(await eventually { calls(h, "/follow").count == 1 })
+        h.server.edit {
+            $0.followStatus = 200
+            $0.beforeFollowReadResponse = nil
+        }
+        await h.model.openThread(second)
+        await gate.open()
+        await delayed.value
+        #expect(h.model.thread?.root == second.id)
+        #expect(!h.model.threadFollowUnavailable)
+        #expect(h.model.threadFollow == .known(false))
     }
 
     @Test(
@@ -446,6 +515,7 @@ struct ThreadModelTests {
         h.server.edit { $0.followStatus = 500 }
         await h.model.openThread(root())
         #expect(h.model.threadFollow == .failed)
+        #expect(!h.model.threadFollowUnavailable)
         h.server.edit { $0.followStatus = 200 }
         await h.model.setFollowing(true)
         #expect(h.model.threadFollow == .known(true))
