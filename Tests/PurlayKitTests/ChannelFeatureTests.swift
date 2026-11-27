@@ -167,6 +167,47 @@ struct ChannelFeatureTests {
         #expect(h.model.notices.contains { $0.kind == .bookmarkFailed })
     }
 
+    @Test("a closed bookmark write leaves the cache as read and does not fetch the list again")
+    func closedBookmarkWrites() async {
+        let docs = bookmark("Docs", "https://docs.example.com")
+        let board = bookmark("Board", "https://board.example.com", at: 2_000)
+        let h = await opened(bookmarks: [docs, board])
+        let reads = calls(h, "GET", "/bookmarks").count
+        h.server.edit { $0.bookmarkError = (404, "ROUTE_NOT_FOUND") }
+
+        #expect(await h.model.addBookmark(title: "Unavailable", address: "example.com", in: first) == .failed)
+        await h.model.removeBookmark(docs)
+        #expect(h.model.channelBookmarks == [docs, board])
+        #expect(!h.model.notices.contains { $0.kind == .bookmarkFailed })
+        #expect(calls(h, "GET", "/bookmarks").count == reads)
+        #expect(calls(h, "POST", "/bookmarks").count == 1)
+        #expect(calls(h, "DELETE", "/bookmarks/").count == 1)
+
+        h.server.edit { $0.bookmarkError = nil }
+        await h.model.removeBookmark(docs)
+        #expect(h.model.channelBookmarks == [board])
+    }
+
+    @Test("a late closed bookmark write cannot restore a link after sign-out")
+    func closedBookmarkAfterSignOut() async {
+        let docs = bookmark("Docs", "https://docs.example.com")
+        let h = await opened(bookmarks: [docs])
+        let gate = Gate()
+        h.server.edit {
+            $0.bookmarkError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeBookmarkWriteResponse = { await gate.wait() }
+        }
+        let removing = Task { await h.model.removeBookmark(docs) }
+        #expect(await eventually { calls(h, "DELETE", "/bookmarks/").count == 1 })
+        #expect(h.model.channelBookmarks.isEmpty)
+
+        await h.model.signOut(.thisDevice)
+        await gate.open()
+        await removing.value
+        #expect(h.model.bookmarks(in: first).isEmpty)
+        #expect(!h.model.notices.contains { $0.kind == .bookmarkFailed })
+    }
+
     // MARK: Mark unread
 
     @Test(

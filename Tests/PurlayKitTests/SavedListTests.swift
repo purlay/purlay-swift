@@ -187,6 +187,31 @@ struct SavedListTests {
         #expect(h.model.savedIDs[item.message.id] == .inProgress)
     }
 
+    @Test("a closed Chat write leaves the Saved row and marker as read without a follow-up GET")
+    func closedSavedRowWrites() async throws {
+        let h = await ready()
+        h.model.savedOpen = true
+        await h.model.loadSaved(.inProgress)
+        let item = try #require(h.model.savedItems.first)
+        let rows = h.model.savedItems
+        let readCount = h.server.requests.filter { $0.method == "GET" && $0.url.path.hasSuffix("/saved") }.count
+        h.server.edit { $0.saveError = (404, "ROUTE_NOT_FOUND") }
+
+        #expect(await h.model.moveSaved(item, to: .completed) == false)
+        #expect(h.model.savedIDs[item.message.id] == .inProgress)
+        #expect(h.model.savedItems == rows)
+
+        // The page and its sidebar markers are read independently.
+        h.model.savedIDs[item.message.id] = nil
+        await h.model.removeSaved(item)
+        #expect(h.model.savedItems == rows)
+        #expect(!h.model.isSaved(item.message))
+        #expect(h.model.savedOpen)
+        #expect(h.model.savedUpdating.isEmpty)
+        #expect(!h.model.notices.contains { $0.kind == .saveFailed })
+        #expect(h.server.requests.filter { $0.method == "GET" && $0.url.path.hasSuffix("/saved") }.count == readCount)
+    }
+
     @Test(
         "switching to the destination while a move commits shows the item, whichever response arrives first",
         arguments: [10, 140])

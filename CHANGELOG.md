@@ -4,6 +4,10 @@
 
 - Dismiss Threads, Saved Messages, Open Topics, Scheduled Messages, Reminders and Pins if a server node does not serve
   their Chat read route. Keep the session, existing system alarms and later requests available.
+- Restore saved markers, pins and bookmarks when a Chat node cannot serve their write route. Skip the connection notice
+  and the bookmark follow-up read for that refusal.
+- Keep confirmed Inbox receipts, pending scheduled edits and reminder alarms when a Chat node declines an action route.
+  Dismiss only the thread that was acted on when its resolution or follow route is unavailable.
 
 ## 0.3.0 — 2026-11-27
 

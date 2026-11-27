@@ -111,22 +111,30 @@ extension AppModel {
         guard let api else { return }
         let session = contextGeneration
         let channel = bookmark.channelId
-        bookmarks[channel] = (bookmarks[channel] ?? []).filter { $0.id != bookmark.id }
+        let before = bookmarks[channel] ?? []
+        bookmarks[channel] = before.filter { $0.id != bookmark.id }
         do {
             try await api.removeBookmark(channelId: channel.value, bookmarkId: bookmark.id.value)
         } catch let error as APIError where error.code == .bookmarkNotFound {
             return
         } catch {
             guard session == contextGeneration else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                if let held = before.first(where: { $0.id == bookmark.id }) { restoreBookmark(held) }
+                return
+            }
             if await reloadBookmarks(channel) != .loaded, session == contextGeneration {
-                var list = bookmarks[channel] ?? []
-                if !list.contains(where: { $0.id == bookmark.id }) {
-                    list.append(bookmark)
-                    list.sort { $0.addedAt.date < $1.addedAt.date }
-                }
-                bookmarks[channel] = list
+                restoreBookmark(bookmark)
             }
             if session == contextGeneration { say(.bookmarkFailed) }
         }
+    }
+
+    private func restoreBookmark(_ bookmark: ChannelBookmark) {
+        var list = bookmarks[bookmark.channelId] ?? []
+        guard !list.contains(where: { $0.id == bookmark.id }) else { return }
+        list.append(bookmark)
+        list.sort { $0.addedAt.date < $1.addedAt.date }
+        bookmarks[bookmark.channelId] = list
     }
 }

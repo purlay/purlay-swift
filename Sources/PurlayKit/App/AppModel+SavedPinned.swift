@@ -61,11 +61,14 @@ extension AppModel {
     /// Saves a message for the person, or lets the save go: painted at once, put back with a word if the server refuses. A deleted message
     /// is not saved, though a save of one can be let go.
     public func setSaved(_ saved: Bool, _ message: Message) async {
-        guard let api, !savedUpdating.contains(message.id) else { return }
+        _ = await writeSaved(saved, message)
+    }
+
+    private func writeSaved(_ saved: Bool, _ message: Message) async -> Bool {
+        guard let api, !savedUpdating.contains(message.id), !saved || message.deletedAt == nil else { return false }
         let session = contextGeneration
         savedUpdating.insert(message.id)
         defer { if session == contextGeneration { savedUpdating.remove(message.id) } }
-        if saved && message.deletedAt != nil { return }
         let before = savedIDs[message.id]
         savedIDs[message.id] = saved ? (before ?? .inProgress) : nil
         do {
@@ -74,13 +77,16 @@ extension AppModel {
             } else {
                 try await api.unsaveMessage(messageId: message.id.value)
             }
-            guard session == contextGeneration else { return }
+            guard session == contextGeneration else { return false }
             if !saved { savedItems.removeAll { $0.message.id == message.id } }
             if savedOpen || savedLoading { await loadSaved(savedState) }
+            return true
         } catch {
-            guard session == contextGeneration else { return }
+            guard session == contextGeneration else { return false }
             savedIDs[message.id] = isPersonallyDeleted(message.id) ? nil : before
+            guard (error as? APIError)?.isMissingRoute != true else { return false }
             if let api = error as? APIError, api.code == .savedLimit { say(.savedFull) } else { say(.saveFailed) }
+            return false
         }
     }
 
@@ -187,7 +193,7 @@ extension AppModel {
             }
             return true
         } catch {
-            if session == contextGeneration { say(.saveFailed) }
+            if session == contextGeneration, (error as? APIError)?.isMissingRoute != true { say(.saveFailed) }
             return false
         }
     }
@@ -202,8 +208,7 @@ extension AppModel {
 
     public func removeSaved(_ item: SavedItem) async {
         let session = contextGeneration
-        await setSaved(false, item.message)
-        guard session == contextGeneration else { return }
+        guard await writeSaved(false, item.message), session == contextGeneration else { return }
         if savedIDs[item.message.id] == nil {
             if savedStatus == .loading || loadingMoreSaved {
                 await loadSaved(savedState)
@@ -221,16 +226,17 @@ extension AppModel {
         if pinned && message.deletedAt != nil { return }
         let channel = message.channelId
         let before = pins[channel] ?? []
+        let previousIndex = before.firstIndex { $0.message.id == message.id }
+        var optimisticPin: PinnedMessage?
         if pinned {
-            if !isPinned(message) {
-                pins[channel] =
-                    [
-                        PinnedMessage(
-                            message: message, pinnedAt: Timestamp(environment.clock()),
-                            pinnedBy: User(
-                                avatarUrl: me.user.avatarUrl, displayName: me.user.displayName, id: me.user.id,
-                                username: me.user.username))
-                    ] + before
+            if previousIndex == nil {
+                let pin = PinnedMessage(
+                    message: message, pinnedAt: Timestamp(environment.clock()),
+                    pinnedBy: User(
+                        avatarUrl: me.user.avatarUrl, displayName: me.user.displayName, id: me.user.id,
+                        username: me.user.username))
+                optimisticPin = pin
+                pins[channel] = [pin] + before
             }
         } else {
             pins[channel] = before.filter { $0.message.id != message.id }
@@ -243,7 +249,16 @@ extension AppModel {
             }
         } catch {
             guard session == contextGeneration else { return }
-            pins[channel] = before.filter { !isPersonallyDeleted($0.message.id) }
+            // Undo only this write; another message's pin may have changed while the request was in flight.
+            var current = pins[channel] ?? []
+            if let optimisticPin {
+                current.removeAll { $0 == optimisticPin }
+            } else if !pinned, let previousIndex, !current.contains(where: { $0.message.id == message.id }) {
+                current.insert(before[previousIndex], at: min(previousIndex, current.count))
+                current.sort { $0.pinnedAt.date > $1.pinnedAt.date }
+            }
+            pins[channel] = current.filter { !isPersonallyDeleted($0.message.id) }
+            guard (error as? APIError)?.isMissingRoute != true else { return }
             if let api = error as? APIError, api.code == .pinsLimit { say(.pinsFull) } else { say(.pinFailed) }
         }
     }

@@ -48,6 +48,7 @@ final class FakeServer: HTTPTransport {
         var pinsReadError: (status: Int, code: String)?
         var beforePinsResponse: (@Sendable () async -> Void)?
         var pinError: (status: Int, code: String)?
+        var beforePinWriteResponse: (@Sendable () async -> Void)?
         var searchStatus = 200
         var searchErrorCode = "INTERNAL"
         var unresolvedStatus = 200
@@ -145,6 +146,7 @@ final class FakeServer: HTTPTransport {
         var bookmarks: [String: [ChannelBookmark]] = [:]
         var bookmarkReadError: (status: Int, code: String)?
         var bookmarkError: (status: Int, code: String)?
+        var beforeBookmarkWriteResponse: (@Sendable () async -> Void)?
         var unreadStatus = 200
         var unreads: [(channel: String, from: String)] = []
         var readAllStatus = 200
@@ -1009,6 +1011,7 @@ final class FakeServer: HTTPTransport {
         case ("PUT", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/pin"),
             ("DELETE", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/pin"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforePinWriteResponse?()
             if let failure = snapshot.pinError {
                 return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
             }
@@ -1168,6 +1171,7 @@ final class FakeServer: HTTPTransport {
             return HTTPResponse(status: 204)
         case (_, _) where path.hasPrefix("/api/channels/") && path.contains("/bookmarks"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            if request.method != "GET" { await snapshot.beforeBookmarkWriteResponse?() }
             return bookmarks(request, snapshot)
         case ("PUT", _) where path.hasPrefix("/api/channels/") && path.hasSuffix("/unread"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
