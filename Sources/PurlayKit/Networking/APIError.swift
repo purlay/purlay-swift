@@ -50,6 +50,9 @@ public struct APIError: Error, Sendable, Equatable {
             status: response.status, code: unreadableCode, message: "", retryAfter: retryAfter, requestID: requestID)
     }
 
+    // A module the server does not run has the same response as an unknown route (D-250).
+    var isMissingRoute: Bool { status == 404 && code == .routeNotFound }
+
     /// For `426`: what the server asks of this client, if it said.
     public var clientTooOld: ClientTooOldDetails? {
         guard code == .clientTooOld, let details,

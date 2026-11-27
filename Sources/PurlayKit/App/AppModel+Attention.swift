@@ -126,7 +126,13 @@ extension AppModel {
     /// Tells what needs the person where they are not looking: the Dock badge, and a notice for what is new while the window is not in front,
     /// never in Deep Work. What the badge counts is what interrupts; nothing is classified twice (D-148).
     func tellAttention() {
-        guard engine != nil else { return }
+        guard engine != nil, chatAvailable else {
+            if lastBadge != nil { environment.attention.setBadge(nil) }
+            lastBadge = nil
+            deepWorkTimer?()
+            deepWorkTimer = nil
+            return
+        }
         let end = deepWorkEnd
         let outcome = attention.observe(
             Array(chat.channels.values), deepWork: end != nil, inFront: sessionIsActive, noticesOn: noticesOn)

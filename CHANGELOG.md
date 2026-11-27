@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep chat available when an older server omits `modules` from `/api/me`. Explicitly empty lists still open a core-only workspace.
+- Treat a closed chat operation during a rolling deployment as unavailable and keep the session and pending messages.
+
 ## 0.2.1 — 2026-11-26
 
 - Native browser sign-in sends the app platform so the server can name Purlay for Mac or Purlay for iOS (D-191).

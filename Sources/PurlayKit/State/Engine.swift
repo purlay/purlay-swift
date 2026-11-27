@@ -91,6 +91,7 @@ public final class Engine {
     /// The connection has been open at least once on this run. Kept here, where the status changes: open and lost between two renders is
     /// still a connection that was open and is lost.
     public private(set) var connectedOnce = false
+    var chatOperationsUnavailable: Bool { connection.chatOperationsUnavailable }
     /// Unsent messages that went with a channel the person lost, and a number that rises each time, so a notice says it once per loss.
     public private(set) var lost: (count: Int, sequence: Int)?
 
@@ -296,6 +297,15 @@ public final class Engine {
     // MARK: Frames
 
     private func frame(_ frame: ServerFrame) {
+        if case .error(let refusal) = frame, refusal.refusesOperation, let reference = refusal.refId {
+            if connection.chatOperationsUnavailable || sends.pending.contains(where: { $0.id == reference }) {
+                connection.pauseChatOperations()
+                // Keep unsent messages until a new connection can decide; the refusal was not content validation.
+                sends.networkLost()
+                options.onChange()
+            }
+            return
+        }
         // A frame about a send: an acknowledgement, an error that names one, an echo.
         if sends.handle(frame) { return }
         switch frame {
@@ -428,7 +438,7 @@ public final class Engine {
     /// still fails the feed has a hole the cursor cannot be trusted to fill, so the channel is read whole, from the server, and shown as
     /// degraded until that is done. One continuation per channel at a time: a second `ACK` for the same one does not start a parallel read.
     private func continueReplay(_ channel: Uuid, from: Uuid) async {
-        guard !continuing.contains(channel) else { return }
+        guard !chatOperationsUnavailable, !continuing.contains(channel) else { return }
         continuing.insert(channel)
         let mine = epoch
         defer { if mine == epoch { continuing.remove(channel) } }
@@ -442,12 +452,15 @@ public final class Engine {
                 degraded[channel] = nil
                 options.onChange()
                 return
+            } catch let error as APIError where error.isMissingRoute {
+                // The cursor stays pinned until a connection to a serving node can replay the gap.
+                return
             } catch {
-                guard mine == epoch else { return }
+                guard mine == epoch, !chatOperationsUnavailable else { return }
                 guard attempt < delays.count else { break }
                 let waited = await sleep(milliseconds: delays[attempt])
                 attempt += 1
-                guard waited, mine == epoch else { return }
+                guard waited, mine == epoch, !chatOperationsUnavailable else { return }
             }
         }
         degraded[channel] = .replay

@@ -61,6 +61,14 @@ extension AppErrorBody {
     }
 }
 
+extension ErrorFrame {
+    /// A closed module's operation is indistinguishable from an operation the server has never heard of (D-250).
+    var refusesOperation: Bool {
+        guard case .validationFailed(let failure) = data else { return false }
+        return failure.details.fields == ["op": "is not an operation this server accepts"]
+    }
+}
+
 /// What one text message from the server is.
 public enum ServerMessage: Sendable, Equatable {
     case frame(ServerFrame)

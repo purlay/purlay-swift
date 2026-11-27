@@ -112,6 +112,7 @@ extension AppModel {
 
     /// Opens a channel: the window of messages it already holds is shown at once, and the newest page is read.
     public func open(_ channelID: Uuid) async {
+        guard chatAvailable else { return }
         navigationGeneration += 1
         // Read again for a new frame is the same channel: the keyboard stays where it was.
         if selectedChannel != channelID { keyboardRow = nil }
@@ -133,6 +134,8 @@ extension AppModel {
             sync()
             await reloadPins(channelID)
             await reloadBookmarks(channelID)
+        } catch let error as APIError where error.isMissingRoute {
+            closeChatRoute(on: engine)
         } catch {
             // A channel with nothing to show says so on its own screen; one that already has messages keeps them.
             if chat.windows[channelID] == nil { channelLoadFailed.insert(channelID) }
@@ -143,7 +146,8 @@ extension AppModel {
     /// Reads the page of messages before what is held. One at a time; the page is added to the window as it is when the page lands,
     /// not as it was when it was asked for, so a message, an edit or a reaction that came in meanwhile is kept.
     public func loadOlder() async {
-        guard !loadingOlder, let channelID = selectedChannel, let api, let engine, let window = chat.windows[channelID],
+        guard chatAvailable, !loadingOlder, let channelID = selectedChannel, let api, let engine,
+            let window = chat.windows[channelID],
             !window.reachesOldest,
             let oldest = window.messages.first
         else { return }
@@ -154,6 +158,8 @@ extension AppModel {
                 channelId: channelID.value,
                 query: PageQuery(before: oldest.id, limit: ContractConstants.pageLimit.default))
             engine.prepend(page.data, reachesOldest: page.nextCursor == nil, for: channelID)
+        } catch let error as APIError where error.isMissingRoute {
+            closeChatRoute(on: engine)
         } catch {
             say(.loadFailed)
         }
@@ -164,7 +170,8 @@ extension AppModel {
     @discardableResult
     public func send(_ text: String) -> Bool {
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let channelID = selectedChannel, engine != nil, canSend(text: text, channel: channelID, parent: nil)
+        guard let channelID = selectedChannel, engine != nil,
+            canSend(text: text, channel: channelID, parent: nil)
         else {
             return false
         }
@@ -176,7 +183,9 @@ extension AppModel {
         return true
     }
 
-    public func retry(_ id: Uuid) { engine?.retry(id) }
+    public func retry(_ id: Uuid) {
+        if chatAvailable { engine?.retry(id) }
+    }
     public func discard(_ id: Uuid) { engine?.discard(id) }
     public func retryDegraded() { engine?.retryDegraded() }
     public func networkLost() { engine?.networkLost() }

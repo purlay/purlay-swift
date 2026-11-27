@@ -281,6 +281,10 @@ public final class SendCoordinator {
         guard let message = find(id) else { return }
         let reason: SendFailure
         switch error {
+        case let api as APIError where api.isMissingRoute:
+            // This node does not serve the send endpoint. Keep the outbox for another connection.
+            cancelTimer(id)
+            return
         case let api as APIError: reason = .code(api.code)
         case TransportError.noSession: reason = .code(.unauthenticated)
         case let transport as TransportError where transport.isTransient: reason = .network

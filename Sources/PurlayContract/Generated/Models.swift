@@ -10735,7 +10735,7 @@ public struct MeResponse: Sendable, Hashable, Codable {
         self.isServerAdmin = try container.decode(Bool.self, forKey: .isServerAdmin)
         self.mayCreateWorkspace = try container.decode(Bool.self, forKey: .mayCreateWorkspace)
         self.memberships = try container.decode([Membership].self, forKey: .memberships)
-        self.modules = try container.decode([ModuleId].self, forKey: .modules)
+        self.modules = container.contains(.modules) ? try container.decode([ModuleId].self, forKey: .modules) : [.chat]
         self.mustEnrolTwoFactor = try container.decode(Bool.self, forKey: .mustEnrolTwoFactor)
         self.nameFromGitHub = try container.decode(Bool.self, forKey: .nameFromGitHub)
         self.profile = try container.decode(Profile.self, forKey: .profile)
