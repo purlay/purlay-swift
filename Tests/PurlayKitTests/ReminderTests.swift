@@ -59,6 +59,47 @@ struct ReminderTests {
         #expect(!h.model.remindersFailed)
     }
 
+    @Test("a missing Reminders route dismisses the page without retracting existing alarms")
+    func closedRoute() async throws {
+        let h = await opened()
+        let message = try #require(h.model.window?.messages.first)
+        try await h.model.setReminder(for: message, at: due)
+        let held = h.model.reminderItems
+        let cleared = h.attention.clearedReminderScopes.count
+        h.model.remindersOpen = true
+        h.server.edit { $0.reminderError = (404, "ROUTE_NOT_FOUND") }
+
+        #expect(await h.model.loadReminders())
+        #expect(!h.model.remindersOpen)
+        #expect(!h.model.remindersFailed)
+        #expect(!h.model.remindersLoading)
+        #expect(h.model.reminderItems == held)
+        #expect(h.attention.reminders.values.flatMap { $0 }.count == 1)
+        #expect(h.attention.clearedReminderScopes.count == cleared)
+
+        h.server.edit { $0.reminderError = nil }
+        h.model.remindersOpen = true
+        #expect(await h.model.loadReminders())
+        #expect(h.model.remindersOpen)
+        #expect(h.model.reminderItems == held)
+    }
+
+    @Test("a missing route from a companion window closes only the requesting page")
+    func companionClosedRoute() async throws {
+        let h = await opened()
+        let message = try #require(h.model.window?.messages.first)
+        let request = try #require(h.model.conversationWindowRequest(for: message.channelId))
+        let window = try #require(await h.model.makeConversationWindow(request))
+        h.model.remindersOpen = true
+        window.remindersOpen = true
+        h.server.edit { $0.reminderError = (404, "ROUTE_NOT_FOUND") }
+
+        #expect(await window.loadReminders())
+        #expect(!window.remindersOpen)
+        #expect(h.model.remindersOpen)
+        #expect(!window.remindersFailed)
+    }
+
     @Test("companion windows share reminders, but closing one leaves system reminders running")
     func windows() async throws {
         let h = await opened()
