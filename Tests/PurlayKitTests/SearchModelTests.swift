@@ -486,9 +486,8 @@ struct SearchModelTests {
             $0.savedSearchPageSize = 2
         }
         h.model.openSearch()
-        await h.settle()
+        #expect(await eventually { h.model.savedSearchesStatus == .loaded })
         #expect(h.model.savedSearches.map(\.name) == ["three", "two", "one"])
-        #expect(h.model.savedSearchesStatus == .loaded)
         #expect(calls(h, "/saved-searches").count == 2)
     }
 
