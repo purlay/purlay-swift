@@ -36,6 +36,22 @@ struct KeychainSessionStoreTests {
         #expect(try store.load(for: server)?.cookie == "second")
     }
 
+    @Test("conditional deletion by a separate store instance preserves the replacement credential")
+    func matchingAcrossInstances() throws {
+        let service = "dev.purlay.mac.tests." + UUID().uuidString
+        let reader = KeychainSessionStore(service: service)
+        let writer = KeychainSessionStore(service: service)
+        defer { try? writer.delete(for: server) }
+        let old = session("previous")
+        let replacement = session("replacement")
+        try reader.save(old, for: server)
+        try writer.save(replacement, for: server)
+        #expect(try !reader.delete(ifMatching: old, for: server))
+        #expect(try reader.load(for: server) == replacement)
+        #expect(try reader.delete(ifMatching: replacement, for: server))
+        #expect(try writer.load(for: server) == nil)
+    }
+
     @Test("each server has its own session, and removing one leaves the other")
     func perServer() throws {
         let store = store()

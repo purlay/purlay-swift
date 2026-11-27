@@ -1,11 +1,19 @@
 import Foundation
 import Security
+import Synchronization
 
 /// Where the session is kept between runs. One per server address (M-9).
 public protocol SessionStore: Sendable {
     func load(for server: ServerAddress) throws -> StoredSession?
     func save(_ session: StoredSession, for server: ServerAddress) throws
     func delete(for server: ServerAddress) throws
+    /// Atomically deletes only the expected entry, relative to writes through this store.
+    func delete(ifMatching session: StoredSession, for server: ServerAddress) throws -> Bool
+}
+
+extension SessionStore {
+    /// A store without conditional deletion leaves the credential alone.
+    public func delete(ifMatching session: StoredSession, for server: ServerAddress) throws -> Bool { false }
 }
 
 public struct KeychainError: Error, Sendable, Equatable {
@@ -21,6 +29,8 @@ public struct KeychainError: Error, Sendable, Equatable {
 /// The session as a generic password in the login keychain (M-22): file-based, so it works in the sandbox and under the
 /// hardened runtime without an entitlement; no iCloud, and no reliance on `kSecAttrAccessible`.
 public struct KeychainSessionStore: SessionStore {
+    // Workspace models can own different store instances and still write the same credential.
+    private static let writes = Mutex(())
     private let service: String
 
     public init(service: String = "dev.purlay.mac.session") {
@@ -53,16 +63,31 @@ public struct KeychainSessionStore: SessionStore {
 
     public func save(_ session: StoredSession, for server: ServerAddress) throws {
         let data = try JSONEncoder().encode(session)
-        var add = query(for: server)
-        add[kSecValueData as String] = data
-        var status = SecItemAdd(add as CFDictionary, nil)
-        if status == errSecDuplicateItem {
-            status = SecItemUpdate(query(for: server) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        try Self.writes.withLock { _ in
+            var add = query(for: server)
+            add[kSecValueData as String] = data
+            var status = SecItemAdd(add as CFDictionary, nil)
+            if status == errSecDuplicateItem {
+                status = SecItemUpdate(
+                    query(for: server) as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+            }
+            guard status == errSecSuccess else { throw KeychainError(status: status, operation: "write") }
         }
-        guard status == errSecSuccess else { throw KeychainError(status: status, operation: "write") }
     }
 
     public func delete(for server: ServerAddress) throws {
+        try Self.writes.withLock { _ in try deleteEntry(for: server) }
+    }
+
+    public func delete(ifMatching session: StoredSession, for server: ServerAddress) throws -> Bool {
+        try Self.writes.withLock { _ in
+            guard try load(for: server) == session else { return false }
+            try deleteEntry(for: server)
+            return true
+        }
+    }
+
+    private func deleteEntry(for server: ServerAddress) throws {
         let status = SecItemDelete(query(for: server) as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw KeychainError(status: status, operation: "delete")
