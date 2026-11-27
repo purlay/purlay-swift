@@ -460,6 +460,11 @@ struct HeartbeatTests {
         let socket = h.openOne()
         socket.handlers.message(#"{"event":"FROM_THE_FUTURE","data":{},"ts":\#(epochMs)}"#)
         #expect(!h.waits.contains(deadline))
+        #expect(h.connection.status == .open)
+        #expect(h.frames.isEmpty)
+        #expect(!socket.closedByClient)
+        socket.handlers.message(Wire.created(channel(1), idAt(1_000)))
+        #expect(h.frames.count == 1)
     }
 
     @Test("a frame that is malformed is not proof of life")

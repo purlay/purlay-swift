@@ -67,7 +67,8 @@ final class FakeServer: HTTPTransport {
         var linkPreviews: [String: String] = [:]
         var linkPreviewStatus = 200
         /// The modules the server runs, and the ones this workspace's grant leaves the person (`nil`: the grant says nothing).
-        var modules = ["chat", "issues"]
+        var modules: [String]? = ["chat", "issues"]
+        var meExtraJSON = ""
         var workspaceModules: [String]?
         /// The person's own groups of channels (D-284), in the order the server lists them.
         var channelGroups: [ChannelGroup] = []
@@ -101,6 +102,7 @@ final class FakeServer: HTTPTransport {
         var threadPageSize: Int?
         var threadStatus = 200
         var messagesStatus = 200
+        var messagesErrorCode = "INTERNAL"
         var threadDelays: [String: Int] = [:]
         var threadReads: [(root: String, read: String)] = []
         var follows: [String: Bool] = [:]
@@ -226,7 +228,7 @@ final class FakeServer: HTTPTransport {
     static func meJSON(
         deepWorkUntil: String? = nil, role: String = "member", mustEnrolTwoFactor: Bool = false,
         nameFromGitHub: Bool = false, scheduledDeletions: [WorkspaceDeletion] = [], awayChosen: Bool = false,
-        modules: [String] = ["chat", "issues"], workspaceModules: [String]? = nil,
+        modules: [String]? = ["chat", "issues"], workspaceModules: [String]? = nil, meExtraJSON: String = "",
         profile: String = #"{"title":null,"timeZone":null,"status":null}"#
     ) -> String {
         """
@@ -235,7 +237,7 @@ final class FakeServer: HTTPTransport {
         "memberships":[{"workspace":{"id":"\(workspaceID)","name":"Acme","slug":"acme","avatarUrl":null},"role":"\(role)",\
         "joinedAt":"2026-10-09T12:00:00.000Z","deepWorkUntil":\(deepWorkUntil.map { "\"\($0)\"" } ?? "null")\(workspaceModules.map { ",\"modules\":\(encoded($0))" } ?? "")}],"mayCreateWorkspace":false,"isServerAdmin":false,\
         "nameFromGitHub":\(nameFromGitHub),"mustEnrolTwoFactor":\(mustEnrolTwoFactor),"scheduledDeletions":\(encoded(scheduledDeletions)),\
-        "modules":\(encoded(modules)),"awayChosen":\(awayChosen)}
+        "awayChosen":\(awayChosen)\(modules.map { ",\"modules\":\(encoded($0))" } ?? "")\(meExtraJSON)}
         """
     }
 
@@ -395,7 +397,8 @@ final class FakeServer: HTTPTransport {
                     deepWorkUntil: snapshot.deepWorkUntil, role: snapshot.role,
                     mustEnrolTwoFactor: snapshot.mustEnrolTwoFactor, nameFromGitHub: snapshot.nameFromGitHub,
                     scheduledDeletions: snapshot.scheduledDeletions, awayChosen: snapshot.awayChosen,
-                    modules: snapshot.modules, workspaceModules: snapshot.workspaceModules, profile: snapshot.profile))
+                    modules: snapshot.modules, workspaceModules: snapshot.workspaceModules,
+                    meExtraJSON: snapshot.meExtraJSON, profile: snapshot.profile))
         case ("GET", "/api/workspaces/\(Self.workspaceID)/channels"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
             if snapshot.channelsStatus == 404 {
@@ -1160,7 +1163,8 @@ final class FakeServer: HTTPTransport {
                 guard hasSession, snapshot.sessionValid else { return unauthenticated() }
                 let id = String(path.dropFirst("/api/channels/".count).dropLast("/messages".count))
                 if snapshot.messagesStatus != 200 {
-                    return json(snapshot.messagesStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                    return json(
+                        snapshot.messagesStatus, #"{"error":{"code":"\#(snapshot.messagesErrorCode)","message":"x"}}"#)
                 }
                 let items = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
                 if let before = items.first(where: { $0.name == "before" })?.value {

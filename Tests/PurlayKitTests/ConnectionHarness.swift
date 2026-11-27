@@ -237,6 +237,10 @@ enum Wire {
             #"{"event":"ACK","ts":\#(epochMs),"refId":"\#(refID)","data":{"channels":[\#(list.joined(separator: ","))]}}"#
     }
 
+    static func operationRefusal(refID: String, field: String = "op") -> String {
+        #"{"event":"ERROR","data":{"code":"VALIDATION_FAILED","message":"That frame did not match the contract.","details":{"fields":{"\#(field)":"is not an operation this server accepts"}}},"refId":"\#(refID)","ts":1}"#
+    }
+
     static func error(refID: String, code: String) -> String {
         #"{"event":"ERROR","ts":\#(epochMs),"refId":"\#(refID)","data":{"code":"\#(code)","message":"x"}}"#
     }

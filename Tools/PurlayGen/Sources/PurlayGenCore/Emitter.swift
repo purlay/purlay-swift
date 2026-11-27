@@ -159,7 +159,14 @@ struct Emitter {
                     }
                 }
                 for field in stored {
-                    if isRequest && !field.required && field.nullable {
+                    if value.name == "MeResponse" && field.key == "modules" && field.type == "[ModuleId]"
+                        && field.required
+                    {
+                        // #958: a pre-module server omitted this key. An explicit empty list or malformed value keeps its meaning.
+                        out.line(
+                            "self.modules = container.contains(.modules) ? try container.decode([ModuleId].self, forKey: .modules) : [.chat]"
+                        )
+                    } else if isRequest && !field.required && field.nullable {
                         out.block("if container.contains(.\(field.name))") { out in
                             out.line(
                                 "self.\(field.name) = .some(try container.decodeNil(forKey: .\(field.name)) ? nil : try container.decode(\(field.type).self, forKey: .\(field.name)))"

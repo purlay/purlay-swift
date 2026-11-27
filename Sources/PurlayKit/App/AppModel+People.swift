@@ -70,6 +70,7 @@ extension AppModel {
     /// Whether this workspace has a module: the server runs it, and the workspace's own grant, when it says anything, leaves it to
     /// the person. A server older than modules says nothing, and has chat only.
     public func hasModule(_ module: ModuleId) -> Bool {
+        guard ModuleId.known.contains(module) else { return false }
         guard let me else { return module == .chat }
         guard me.modules.contains(module) else { return false }
         let granted = me.memberships.first { $0.workspace.id == workspace?.id }?.modules
@@ -77,7 +78,13 @@ extension AppModel {
     }
 
     /// Whether this workspace has chat, the module this app is made for.
-    public var chatAvailable: Bool { !chatRouteUnavailable && hasModule(.chat) }
+    public var chatAvailable: Bool { !chatRouteUnavailable && !chatSocketUnavailable && hasModule(.chat) }
+
+    func closeChatRoute(on origin: Engine) {
+        guard engine === origin else { return }
+        chatRouteUnavailable = true
+        tellAttention()
+    }
 }
 
 /// The part of a member's profile worth showing next to a message, with what has expired left out.

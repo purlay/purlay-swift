@@ -18,7 +18,7 @@ extension AppModel {
     /// retried or removed.
     public func canSend(text: String, channel: Uuid, parent: Uuid?) -> Bool {
         let place = Place(channel: channel, parent: parent)
-        guard waitingSends[place] == nil else { return false }
+        guard chatAvailable, waitingSends[place] == nil else { return false }
         let held = uploadsByPlace[place] ?? []
         guard !held.contains(where: \.hasFailed) else { return false }
         return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !held.isEmpty

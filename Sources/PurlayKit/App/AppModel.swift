@@ -95,6 +95,7 @@ public final class AppModel {
     }
 
     var chatRouteUnavailable = false
+    var chatSocketUnavailable = false
     public internal(set) var settingsPage: SettingsPage = .general
     public private(set) var phase: Phase = .launching {
         didSet { onPhaseChange?() }
@@ -722,7 +723,7 @@ public final class AppModel {
             let channels: ChannelList
             do {
                 channels = try await api.listChannels(workspaceId: membership.workspace.id.value)
-            } catch let error as APIError where error.status == 404 && error.code.rawValue == "ROUTE_NOT_FOUND" {
+            } catch let error as APIError where error.isMissingRoute {
                 guard context == contextGeneration else { return }
                 // During a rollout, the node serving channels can have a different module set from /api/me.
                 chatRouteUnavailable = true
@@ -923,6 +924,7 @@ public final class AppModel {
         chat = ChatState()
         pending = []
         connection = .idle
+        chatSocketUnavailable = false
         degraded = [:]
     }
 
@@ -932,6 +934,7 @@ public final class AppModel {
         pending = engine.pending
         let wasOpen = connection == .open
         connection = engine.status
+        chatSocketUnavailable = engine.chatOperationsUnavailable
         // Connected while the person is in front of the app: they are here, and a server that restarted has to be told.
         if !wasOpen, connection == .open { noteActivity() }
         degraded = engine.degraded
@@ -984,7 +987,8 @@ public final class AppModel {
     /// view, and the window reaches the present. Nothing is marked read from a window short of the present, and a message already read
     /// is not marked again.
     private func markReadIfSeen() {
-        guard isActive, atBottom, !inboxOpen, !unresolvedOpen, let channel = selectedChannel, unreadHold != channel,
+        guard chatAvailable, isActive, atBottom, !inboxOpen, !unresolvedOpen, let channel = selectedChannel,
+            unreadHold != channel,
             let window = chat.windows[channel],
             window.reachesNewest,
             let newest = window.messages.last?.id, let api, engine != nil, !marking.contains(channel),

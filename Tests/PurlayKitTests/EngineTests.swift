@@ -99,6 +99,28 @@ struct ReplayContinuationTests {
         #expect(h.engine.degraded.isEmpty)
     }
 
+    @Test("a closed HTTP replay route keeps the cursor and neither retries nor reports degradation")
+    func closedRoute() async {
+        let h = EngineHarness()
+        h.engine.watch([one])
+        h.engine.observe(channel: one, message: idAt(1_000))
+        h.reads.answer(.failure(APIError(status: 404, code: .routeNotFound, message: "No such route.")))
+        let socket = h.openOne()
+        h.answerSubscribe(cursors: [channel(1): idAt(2_000)])
+        await h.settle()
+        for delay in ContractConstants.replayRetryDelaysMs {
+            h.advance(delay)
+            await h.settle()
+        }
+        #expect(h.reads.calls.count == 1)
+        #expect(h.engine.degraded.isEmpty)
+        socket.handlers.message(Wire.created(channel(1), idAt(3_000)))
+        socket.handlers.closed(1006)
+        h.advance(1_000)
+        h.last.handlers.opened()
+        #expect(h.subscribes(h.last).last?.channels.first?.afterMessageId == idAt(1_000).value)
+    }
+
     @Test("that never works hands the channel back to the server whole, and says the channel is degraded")
     func neverWorks() async {
         let h = EngineHarness()
@@ -195,6 +217,70 @@ struct RefusedSubscriptionTests {
         h.advance(1_000)
         h.last.handlers.opened()
         #expect(h.subscribes(h.last).isEmpty)
+    }
+
+    @Test("a closed chat operation keeps the core socket and pauses subscriptions until a new connection")
+    func chatClosed() throws {
+        let h = EngineHarness()
+        h.engine.watch([one])
+        let socket = h.openOne()
+        let subscription = try #require(h.subscribes(socket).last)
+        socket.handlers.message(Wire.operationRefusal(refID: subscription.id))
+        #expect(h.engine.status == .open)
+        #expect(!socket.closedByClient)
+        #expect(h.engine.chatOperationsUnavailable)
+        #expect(h.engine.degraded.isEmpty)
+        h.engine.watch([one, two])
+        h.engine.retryDegraded()
+        #expect(h.subscribes(socket).count == 1)
+        #expect(h.unsubscribes(socket).isEmpty)
+
+        socket.handlers.closed(1006)
+        h.advance(1_000)
+        h.last.handlers.opened()
+        #expect(h.engine.status == .open)
+        #expect(!h.engine.chatOperationsUnavailable)
+        #expect(h.subscribes(h.last).flatMap { $0.channels.map(\.channelId) }.sorted() == [channel(1), channel(2)])
+    }
+
+    @Test("a closed MESSAGE_SEND stays in the outbox without a validation error or an acknowledgement timer")
+    func sendPaused() {
+        let h = EngineHarness()
+        let socket = h.openOne()
+        let id = h.engine.send(Outgoing(channelID: one, content: "unsent"))
+        socket.handlers.message(Wire.operationRefusal(refID: id.value))
+        h.advance(4_000)
+        #expect(h.engine.status == .open)
+        #expect(h.engine.degraded.isEmpty)
+        #expect(h.engine.chatOperationsUnavailable)
+        #expect(h.engine.pending.map(\.id) == [id])
+        #expect(h.engine.pending.first?.delivery == .sending)
+        #expect(h.lost.isEmpty)
+    }
+
+    @Test("the HTTP fallback holds an unsent message if the node does not serve the send route")
+    func httpSendPaused() async {
+        let h = EngineHarness()
+        h.httpBehaviour = { _ in throw APIError(status: 404, code: .routeNotFound, message: "No such route.") }
+        let id = h.engine.send(Outgoing(channelID: one, content: "unsent"))
+        await h.settle()
+        h.advance(4_000)
+        #expect(h.engine.pending.map(\.id) == [id])
+        #expect(h.engine.pending.first?.delivery == .sending)
+        #expect(h.lost.isEmpty)
+        let socket = h.openOne()
+        #expect(socket.sent.contains { $0.contains(id.value) })
+    }
+
+    @Test("an unrelated validation refusal still reports the rejected subscription")
+    func actualValidation() throws {
+        let h = EngineHarness()
+        h.engine.watch([one])
+        let socket = h.openOne()
+        let subscription = try #require(h.subscribes(socket).last)
+        socket.handlers.message(Wire.operationRefusal(refID: subscription.id, field: "payload"))
+        #expect(!h.engine.chatOperationsUnavailable)
+        #expect(h.engine.degraded[one] == .code(.validationFailed))
     }
 
     @Test("Retry asks again for exactly those channels, and clears what was said")
