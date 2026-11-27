@@ -166,13 +166,8 @@ extension AppModel {
         let typed = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(ContractConstants.searchQueryMax))
         searchInput = String(raw.prefix(ContractConstants.searchQueryMax))
         searchQuery = typed
-        searchResults = []
-        searchIssues = []
-        searchCursor = nil
-        loadingMoreResults = false
+        resetSearchResults()
         guard searchable(typed), let api, let workspace else {
-            searchResults = []
-            searchCursor = nil
             searchStatus = .idle
             return
         }
@@ -186,12 +181,17 @@ extension AppModel {
             searchCursor = page.nextCursor
             await findIssues(typed, generation: generation)
             guard generation == searchGeneration else { return }
+            try Task.checkCancellation()
             searchStatus = .done
         } catch {
             guard generation == searchGeneration else { return }
-            searchResults = []
-            searchCursor = nil
-            if Task.isCancelled || error is CancellationError || (error as? TransportError) == .cancelled {
+            let cancelled = TransportError.isCancellation(error)
+            if !cancelled, (error as? APIError)?.isMissingRoute == true {
+                dismissSearch()
+                return
+            }
+            resetSearchResults()
+            if cancelled {
                 searchStatus = .idle
             } else {
                 searchStatus = (error as? APIError)?.code == .validationFailed ? .refused : .failed
@@ -232,12 +232,17 @@ extension AppModel {
             let page = try await api.searchMessages(
                 workspaceId: workspace.id.value, query: searchRequest(before: cursor, q: searchQuery))
             guard generation == searchGeneration else { return }
+            try Task.checkCancellation()
             let held = Set(searchResults.map(\.id))
             searchResults += page.data.filter { !held.contains($0.id) && !isPersonallyDeleted($0.id) }
             searchCursor = page.nextCursor
         } catch {
-            guard generation == searchGeneration else { return }
-            searchStatus = .failed
+            guard generation == searchGeneration, !TransportError.isCancellation(error) else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                dismissSearch()
+            } else {
+                searchStatus = .failed
+            }
         }
     }
 
@@ -247,12 +252,23 @@ extension AppModel {
         searchChannelID = nil
         searchSenderID = nil
         searchFilters = SearchFilters()
-        loadingMoreResults = false
         searchInput = ""
+        resetSearchResults()
+        searchStatus = .idle
+    }
+
+    private func dismissSearch() {
+        searchGeneration += 1
+        searchOpen = false
+        resetSearchResults()
+        searchStatus = .idle
+    }
+
+    private func resetSearchResults() {
+        loadingMoreResults = false
         searchResults = []
         searchIssues = []
         searchCursor = nil
-        searchStatus = .idle
     }
 
     /// Closing search gives up its pending reads, without turning cancellation into a connection failure or losing the query.

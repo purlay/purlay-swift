@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Generate route, client operation and server event owners from the pinned contract. Use the generated ownership when pausing Chat socket operations.
+- Dismiss Inbox notifications or message Search when a server node does not serve its Chat route during a rollout, while
+  keeping the session, core Updates and later requests available.
 
 ## 0.2.2 — 2026-11-27
 
