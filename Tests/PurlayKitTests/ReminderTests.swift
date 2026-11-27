@@ -59,6 +59,63 @@ struct ReminderTests {
         #expect(!h.model.remindersFailed)
     }
 
+    @Test("missing reminder writes preserve the confirmed reminder and system alarm until a healthy retry")
+    func missingWrites() async throws {
+        let h = await opened()
+        let message = try #require(h.model.window?.messages.first)
+        try await h.model.setReminder(for: message, at: due)
+        let held = try #require(h.model.reminderItems.first)
+        let before = h.attention.clearedReminderScopes
+        let request = try #require(h.model.conversationWindowRequest(for: message.channelId))
+        let window = try #require(await h.model.makeConversationWindow(request))
+        h.model.remindersOpen = true
+        h.server.edit { $0.reminderError = (404, "ROUTE_NOT_FOUND") }
+
+        await #expect(throws: ReminderFailure.temporarilyUnavailable) {
+            try await h.model.setReminder(for: message, at: due.addingTimeInterval(3_600))
+        }
+        await #expect(throws: ReminderFailure.temporarilyUnavailable) { try await window.cancelReminder(held) }
+        #expect(h.model.reminderItems == [held])
+        #expect(window.reminderItems == [held])
+        #expect(h.model.remindersOpen)
+        #expect(h.model.supportsReminders)
+        #expect(h.attention.reminders.values.flatMap { $0 }.map(\.date) == [due])
+        #expect(h.attention.cancelledReminders.isEmpty)
+        #expect(h.attention.clearedReminderScopes == before)
+
+        h.server.edit { $0.reminderError = (403, "ROUTE_NOT_FOUND") }
+        await #expect(throws: ReminderFailure.failed) { try await window.cancelReminder(held) }
+        h.server.edit { $0.reminderError = (404, "MESSAGE_NOT_FOUND") }
+        await #expect(throws: ReminderFailure.access) { try await window.cancelReminder(held) }
+        #expect(h.model.reminderItems == [held])
+        #expect(h.attention.cancelledReminders.isEmpty)
+
+        h.server.edit { $0.reminderError = nil }
+        try await window.cancelReminder(held)
+        #expect(h.model.reminderItems.isEmpty)
+        #expect(h.attention.cancelledReminders == [held.id.value])
+    }
+
+    @Test("a cancelled or stale reminder write cannot report a missing feature", arguments: [false, true])
+    func delayedMissingWrite(signingOut: Bool) async throws {
+        let h = await opened()
+        let message = try #require(h.model.window?.messages.first)
+        let response = Gate()
+        h.server.edit {
+            $0.reminderError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeReminderResponse = { await response.wait() }
+        }
+        let write = Task { try await h.model.setReminder(for: message, at: due) }
+        #expect(await eventually { h.server.requests.contains { $0.url.path.hasSuffix("/reminder") } })
+        if signingOut { await h.model.signOut(.thisDevice) } else { write.cancel() }
+        await response.open()
+        await #expect(throws: signingOut ? ReminderFailure.sessionChanged : ReminderFailure.failed) {
+            try await write.value
+        }
+        #expect(h.model.reminderItems.isEmpty)
+        #expect(h.attention.reminders.values.flatMap { $0 }.isEmpty)
+    }
+
     @Test("a missing Reminders route dismisses the page without retracting existing alarms")
     func closedRoute() async throws {
         let h = await opened()

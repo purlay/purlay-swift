@@ -300,6 +300,146 @@ struct ThreadModelTests {
         #expect(h.model.notices.map(\.kind).contains(.followFailed))
     }
 
+    @Test(
+        "a closed resolution route leaves the feed status and allows the action after reopening",
+        arguments: [true, false])
+    func closedResolutionRoute(resolving: Bool) async {
+        let h = await opened()
+        await h.model.openThread(root())
+        if !resolving { #expect(await h.model.resolveThread()) }
+        let feed = h.model.window?.messages
+        h.model.searchOpen = true
+        h.server.edit { $0.threadWriteError = (404, "ROUTE_NOT_FOUND") }
+
+        let resolved = resolving ? await h.model.resolveThread() : await h.model.reopenThread()
+        #expect(!resolved)
+        #expect(h.model.thread == nil)
+        #expect(h.model.window?.messages == feed)
+        #expect(h.model.searchOpen)
+        #expect(h.model.chatAvailable)
+        #expect(!h.model.notices.map(\.kind).contains(.resolveFailed))
+
+        h.server.edit { $0.threadWriteError = nil }
+        await h.model.openThread(root())
+        let retry = resolving ? await h.model.resolveThread() : await h.model.reopenThread()
+        #expect(retry)
+        #expect((h.model.threadRoot?.thread?.resolvedAt != nil) == resolving)
+    }
+
+    @Test("a closed follow route abandons the optimistic status and allows a fresh follow", arguments: [true, false])
+    func closedFollowRoute(following: Bool) async {
+        let h = await opened()
+        h.server.edit { $0.follows[idAt(1_000).value] = !following }
+        await h.model.openThread(root())
+        let gate = Gate()
+        h.server.edit {
+            $0.threadWriteError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeThreadWriteResponse = { await gate.wait() }
+        }
+        let action = Task { await h.model.setFollowing(following) }
+        #expect(await eventually { calls(h, "/follow", method: "PUT").count == 1 })
+        #expect(h.model.threadFollow == .known(following))
+        await gate.open()
+        await action.value
+
+        #expect(h.model.thread == nil)
+        #expect(h.model.threadFollow == .reading)
+        #expect(h.model.chatAvailable)
+        #expect(!h.model.notices.map(\.kind).contains(.followFailed))
+        h.server.edit { $0.threadWriteError = nil }
+        await h.model.openThread(root())
+        #expect(h.model.threadFollow == .known(!following))
+        await h.model.setFollowing(following)
+        #expect(h.model.threadFollow == .known(following))
+    }
+
+    @Test(
+        "ordinary refusals retain the thread and say the action failed",
+        arguments: [(403, "FORBIDDEN"), (404, "MESSAGE_NOT_FOUND"), (500, "ROUTE_NOT_FOUND")])
+    func otherThreadWriteFailure(status: Int, code: String) async {
+        let h = await opened()
+        await h.model.openThread(root())
+        h.server.edit { $0.threadWriteError = (status, code) }
+
+        #expect(await !h.model.resolveThread())
+        await h.model.setFollowing(true)
+        #expect(h.model.thread?.root == root().id)
+        #expect(h.model.threadFollow == .known(false))
+        #expect(h.model.notices.map(\.kind).contains(.resolveFailed))
+        #expect(h.model.notices.map(\.kind).contains(.followFailed))
+    }
+
+    @Test("a late thread write refusal cannot close a replacement panel", arguments: [true, false])
+    func lateThreadWriteRefusal(resolve: Bool) async {
+        let a = root()
+        let b = root(2_000)
+        let h = await opened([a, b])
+        await h.model.openThread(a)
+        let gate = Gate()
+        h.server.edit {
+            $0.threadWriteError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeThreadWriteResponse = { await gate.wait() }
+        }
+        let delayed = Task {
+            if resolve { _ = await h.model.resolveThread() } else { await h.model.setFollowing(true) }
+        }
+        #expect(
+            await eventually { calls(h, resolve ? "/resolve" : "/follow", method: resolve ? "POST" : "PUT").count == 1 }
+        )
+        await h.model.openThread(b)
+        await gate.open()
+        await delayed.value
+
+        #expect(h.model.thread?.root == b.id)
+        #expect(h.model.threadFollow == .known(false))
+        #expect(!h.model.notices.map(\.kind).contains(resolve ? .resolveFailed : .followFailed))
+    }
+
+    @Test("a late successful resolution updates the original feed root and leaves the replacement panel alone")
+    func lateSuccessfulResolution() async {
+        let a = root()
+        let b = root(2_000)
+        let h = await opened([a])
+        await h.model.openThread(a)
+        let gate = Gate()
+        h.server.edit { $0.beforeThreadWriteResponse = { await gate.wait() } }
+        let delayed = Task { await h.model.resolveThread() }
+        #expect(await eventually { calls(h, "/resolve", method: "POST").count == 1 })
+        await h.model.openThread(b)
+        await gate.open()
+
+        #expect(await delayed.value)
+        #expect(h.model.window?.messages.first { $0.id == a.id }?.thread?.resolvedAt != nil)
+        #expect(h.model.threadRoot?.id == b.id)
+        #expect(h.model.threadRoot?.thread?.resolvedAt == nil)
+    }
+
+    @Test(
+        "cancelling a thread write ignores a late closed route and restores the follow button",
+        arguments: [true, false])
+    func cancelledThreadWriteRefusal(resolve: Bool) async {
+        let h = await opened()
+        await h.model.openThread(root())
+        let gate = Gate()
+        h.server.edit {
+            $0.threadWriteError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeThreadWriteResponse = { await gate.wait() }
+        }
+        let delayed = Task {
+            if resolve { _ = await h.model.resolveThread() } else { await h.model.setFollowing(true) }
+        }
+        #expect(
+            await eventually { calls(h, resolve ? "/resolve" : "/follow", method: resolve ? "POST" : "PUT").count == 1 }
+        )
+        delayed.cancel()
+        await gate.open()
+        await delayed.value
+
+        #expect(h.model.thread?.root == root().id)
+        #expect(h.model.threadFollow == .known(false))
+        #expect(!h.model.notices.map(\.kind).contains(resolve ? .resolveFailed : .followFailed))
+    }
+
     @Test("a follow state that could not be read is there, disabled, and reads again when asked")
     func followUnreadable() async {
         let h = await opened(replies: [idAt(1_000).value: []])

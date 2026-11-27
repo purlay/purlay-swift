@@ -78,6 +78,89 @@ struct ScheduledTests {
         #expect(h.model.scheduledItems.count == 1)
     }
 
+    @Test("a missing schedule write preserves the draft and completed attachment for retry")
+    func missingDraftWrite() async throws {
+        let h = await opened()
+        let conversation = Uuid(channel(1))!
+        let id = idAt(200)
+        let file = Attachment(
+            fileName: "a.txt", height: nil, id: idAt(201), kind: .file, mimeType: "text/plain", sizeBytes: 3, width: nil
+        )
+        h.model.setDraft("Keep me", for: conversation)
+        h.model.uploadsByPlace[AppModel.Place(channel: conversation, parent: nil)] = [
+            Upload(id: file.id, name: file.fileName, size: file.sizeBytes, state: .done(file))
+        ]
+        h.server.edit { $0.scheduledError = (404, "ROUTE_NOT_FOUND") }
+
+        await #expect(throws: SchedulingFailure.temporarilyUnavailable) {
+            try await h.model.scheduleDraft(id: id, text: "Keep me", channel: conversation, parent: nil, at: date)
+        }
+        #expect(h.model.draft(for: conversation) == "Keep me")
+        #expect(h.model.uploads(channel: conversation, parent: nil).compactMap(\.attachment) == [file])
+        #expect(h.model.scheduledItems.isEmpty)
+        #expect(h.model.supportsScheduling)
+        #expect(h.model.chatAvailable)
+
+        h.server.edit { $0.scheduledError = nil }
+        try await h.model.scheduleDraft(id: id, text: "Keep me", channel: conversation, parent: nil, at: date)
+        let write = try #require(h.server.requests.last { $0.url.path.hasSuffix("/scheduled/\(id.value)") })
+        let body = try JSONDecoder().decode(ScheduleMessageRequest.self, from: #require(write.body))
+        #expect(body.attachmentIds == [file.id])
+        #expect(h.model.draft(for: conversation).isEmpty)
+        #expect(h.model.uploads(channel: conversation, parent: nil).isEmpty)
+        #expect(h.model.scheduledItems.map(\.id) == [id])
+    }
+
+    @Test("missing scheduled actions leave the confirmed item and list open")
+    func missingExistingWrites() async throws {
+        let h = await opened()
+        let conversation = Uuid(channel(1))!
+        try await h.model.scheduleDraft(id: idAt(200), text: "Later", channel: conversation, parent: nil, at: date)
+        let item = try #require(h.model.scheduledItems.first)
+        h.model.scheduledOpen = true
+        h.server.edit { $0.scheduledError = (404, "ROUTE_NOT_FOUND") }
+        await #expect(throws: SchedulingFailure.temporarilyUnavailable) {
+            try await h.model.updateScheduled(item, text: "Changed", files: [], at: date.addingTimeInterval(60))
+        }
+        await #expect(throws: SchedulingFailure.temporarilyUnavailable) { try await h.model.cancelScheduled(item) }
+        await #expect(throws: SchedulingFailure.temporarilyUnavailable) { try await h.model.sendScheduledNow(item) }
+        #expect(h.model.scheduledItems == [item])
+        #expect(h.model.scheduledOpen)
+        #expect(!h.model.scheduledFailed)
+
+        h.server.edit { $0.scheduledError = (403, "ROUTE_NOT_FOUND") }
+        await #expect(throws: SchedulingFailure.failed) { try await h.model.cancelScheduled(item) }
+        h.server.edit { $0.scheduledError = (404, "SCHEDULED_MESSAGE_NOT_FOUND") }
+        await #expect(throws: SchedulingFailure.access) { try await h.model.sendScheduledNow(item) }
+        #expect(h.model.scheduledItems == [item])
+
+        h.server.edit { $0.scheduledError = nil }
+        try await h.model.updateScheduled(item, text: "Changed", files: [], at: date.addingTimeInterval(60))
+        #expect(h.model.scheduledItems.first?.content == "Changed")
+    }
+
+    @Test("a cancelled or stale schedule write cannot report a missing feature", arguments: [false, true])
+    func delayedMissingWrite(signingOut: Bool) async throws {
+        let h = await opened()
+        let response = Gate()
+        let conversation = Uuid(channel(1))!
+        let id = idAt(200)
+        h.server.edit {
+            $0.scheduledError = (404, "ROUTE_NOT_FOUND")
+            $0.beforeScheduledResponse = { await response.wait() }
+        }
+        let write = Task {
+            try await h.model.scheduleDraft(id: id, text: "Later", channel: conversation, parent: nil, at: date)
+        }
+        #expect(await eventually { h.server.requests.contains { $0.url.path.hasSuffix("/scheduled/\(id.value)") } })
+        if signingOut { await h.model.signOut(.thisDevice) } else { write.cancel() }
+        await response.open()
+        await #expect(throws: signingOut ? SchedulingFailure.sessionChanged : SchedulingFailure.failed) {
+            try await write.value
+        }
+        #expect(h.model.scheduledItems.isEmpty)
+    }
+
     @Test("a node without the Scheduled route dismisses only that page, and the next open can load")
     func closedRoute() async throws {
         let h = await opened()
@@ -87,7 +170,8 @@ struct ScheduledTests {
         h.model.scheduledOpen = true
         h.server.edit { $0.scheduledError = (404, "ROUTE_NOT_FOUND") }
 
-        await h.model.loadScheduled()
+        let loadScheduled = h.model.loadScheduled
+        await loadScheduled()
 
         #expect(!h.model.scheduledOpen)
         #expect(h.model.scheduledItems.isEmpty)
@@ -117,7 +201,7 @@ struct ScheduledTests {
             $0.beforeScheduledResponse = { await response.wait() }
         }
         var editorOpen = false
-        let reading = Task { await h.model.loadScheduled(dismissOnUnavailable: { !editorOpen }) }
+        let reading = Task { await h.model.refreshScheduled(isEditing: { editorOpen }) }
         #expect(
             await eventually {
                 h.server.requests.contains { $0.method == "GET" && $0.url.path.hasSuffix("/scheduled") }

@@ -29,6 +29,7 @@ final class FakeServer: HTTPTransport {
         var reminders: [MessageReminder] = []
         var reminderError: (status: Int, code: String)?
         var reminderDelay = 0
+        var beforeReminderResponse: (@Sendable () async -> Void)?
         var scheduled: [ScheduledMessage] = []
         var scheduledError: (status: Int, code: String)?
         var scheduledDelay = 0
@@ -47,6 +48,7 @@ final class FakeServer: HTTPTransport {
         var pinsReadError: (status: Int, code: String)?
         var beforePinsResponse: (@Sendable () async -> Void)?
         var pinError: (status: Int, code: String)?
+        var beforePinWriteResponse: (@Sendable () async -> Void)?
         var searchStatus = 200
         var searchErrorCode = "INTERNAL"
         var unresolvedStatus = 200
@@ -92,6 +94,8 @@ final class FakeServer: HTTPTransport {
         /// How long the server takes over a list, by the `unreadOnly` it was asked with ("true" or "false").
         var notificationDelays: [String: Int] = [:]
         var notificationReadStatus = 204
+        var notificationReadErrorCode = "INTERNAL"
+        var beforeNotificationReadResponse: (@Sendable () async -> Void)?
         var notificationReads: [ReadNotificationsRequest] = []
         var searchPageSize: Int?
         var savedSearches: [SavedSearch] = []
@@ -115,6 +119,8 @@ final class FakeServer: HTTPTransport {
         var threadErrorCode = "INTERNAL"
         var threadErrorOnCursor = false
         var beforeThreadResponse: (@Sendable () async -> Void)?
+        var threadWriteError: (status: Int, code: String)?
+        var beforeThreadWriteResponse: (@Sendable () async -> Void)?
         var messagesStatus = 200
         var messagesErrorCode = "INTERNAL"
         var threadDelays: [String: Int] = [:]
@@ -140,6 +146,7 @@ final class FakeServer: HTTPTransport {
         var bookmarks: [String: [ChannelBookmark]] = [:]
         var bookmarkReadError: (status: Int, code: String)?
         var bookmarkError: (status: Int, code: String)?
+        var beforeBookmarkWriteResponse: (@Sendable () async -> Void)?
         var unreadStatus = 200
         var unreads: [(channel: String, from: String)] = []
         var readAllStatus = 200
@@ -275,6 +282,7 @@ final class FakeServer: HTTPTransport {
         }
         if path.contains("/reminder") {
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeReminderResponse?()
             if snapshot.reminderDelay > 0 { try await Task.sleep(for: .milliseconds(snapshot.reminderDelay)) }
             if let error = snapshot.reminderError {
                 return json(error.status, "{\"error\":{\"code\":\"\(error.code)\",\"message\":\"x\"}}")
@@ -485,6 +493,10 @@ final class FakeServer: HTTPTransport {
             return json(200, "{\"following\":\(snapshot.follows[id] ?? false)}")
         case ("PUT", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/follow"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeThreadWriteResponse?()
+            if let failure = snapshot.threadWriteError {
+                return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
+            }
             if snapshot.mutationStatus != 200 {
                 return json(snapshot.mutationStatus, #"{"error":{"code":"FORBIDDEN","message":"x"}}"#)
             }
@@ -496,6 +508,10 @@ final class FakeServer: HTTPTransport {
         case ("POST", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/resolve"),
             ("DELETE", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/resolve"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeThreadWriteResponse?()
+            if let failure = snapshot.threadWriteError {
+                return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
+            }
             if snapshot.mutationStatus != 200 {
                 return json(snapshot.mutationStatus, #"{"error":{"code":"FORBIDDEN","message":"x"}}"#)
             }
@@ -669,8 +685,11 @@ final class FakeServer: HTTPTransport {
             return json(200, "{\"data\":\(Self.encoded(page)),\"nextCursor\":\(next)}")
         case ("PUT", "/api/notifications/read"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforeNotificationReadResponse?()
             if snapshot.notificationReadStatus != 204 {
-                return json(snapshot.notificationReadStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(
+                    snapshot.notificationReadStatus,
+                    #"{"error":{"code":"\#(snapshot.notificationReadErrorCode)","message":"x"}}"#)
             }
             guard let body = request.body,
                 let read = try? JSONDecoder().decode(ReadNotificationsRequest.self, from: body)
@@ -992,6 +1011,7 @@ final class FakeServer: HTTPTransport {
         case ("PUT", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/pin"),
             ("DELETE", _) where path.hasPrefix("/api/messages/") && path.hasSuffix("/pin"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            await snapshot.beforePinWriteResponse?()
             if let failure = snapshot.pinError {
                 return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
             }
@@ -1151,6 +1171,7 @@ final class FakeServer: HTTPTransport {
             return HTTPResponse(status: 204)
         case (_, _) where path.hasPrefix("/api/channels/") && path.contains("/bookmarks"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            if request.method != "GET" { await snapshot.beforeBookmarkWriteResponse?() }
             return bookmarks(request, snapshot)
         case ("PUT", _) where path.hasPrefix("/api/channels/") && path.hasSuffix("/unread"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
