@@ -57,20 +57,27 @@ extension AppModel {
     /// Whoever can see a channel reads its bookmarks; its members change them (D-218).
     public func canChangeBookmarks(in channel: Uuid) -> Bool { chat.channels[channel]?.state != nil }
 
+    enum BookmarkRead { case loaded, unavailable, failed }
+
     @discardableResult
-    func reloadBookmarks(_ channel: Uuid) async -> Bool {
-        guard let api else { return true }
+    func reloadBookmarks(_ channel: Uuid) async -> BookmarkRead {
+        guard let api else { return .loaded }
         let session = contextGeneration
-        guard let list = try? await api.listBookmarks(channelId: channel.value) else { return false }
-        guard session == contextGeneration else { return true }
-        bookmarks[channel] = list
-        return true
+        do {
+            let list = try await api.listBookmarks(channelId: channel.value)
+            guard session == contextGeneration else { return .loaded }
+            bookmarks[channel] = list
+            return .loaded
+        } catch {
+            guard session == contextGeneration else { return .loaded }
+            return (error as? APIError)?.isMissingRoute == true ? .unavailable : .failed
+        }
     }
 
     /// Asked again when the person asks, as the pinned sheet does.
     public func refreshBookmarks() async -> Bool {
         guard let selectedChannel else { return true }
-        return await reloadBookmarks(selectedChannel)
+        return await reloadBookmarks(selectedChannel) == .loaded
     }
 
     /// Adds a link to a channel. Held only once the server made it: the same address again is the bookmark already there.
@@ -111,7 +118,7 @@ extension AppModel {
             return
         } catch {
             guard session == contextGeneration else { return }
-            if await reloadBookmarks(channel) == false, session == contextGeneration {
+            if await reloadBookmarks(channel) != .loaded, session == contextGeneration {
                 var list = bookmarks[channel] ?? []
                 if !list.contains(where: { $0.id == bookmark.id }) {
                     list.append(bookmark)

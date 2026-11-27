@@ -285,6 +285,34 @@ struct SavedPinnedTests {
         h.server.requests.filter { $0.url.path.hasSuffix("/saved/ids") }.count
     }
 
+    @Test("a closed Chat route leaves saved markers as read and does not schedule a retry")
+    func closedSavedMarkers() async throws {
+        let h = ModelHarness()
+        h.server.edit {
+            $0.messages[channel(1)] = [me(1_000, "kept")]
+            $0.saved = [idAt(1_000).value: "in_progress"]
+        }
+        await h.signedIn()
+        #expect(await eventually { h.model.savedIDs[idAt(1_000)] == .inProgress })
+        let workspace = try #require(h.model.workspace?.id)
+        let before = savedReads(h)
+        h.server.edit {
+            $0.savedIdsStatus = 404
+            $0.savedIdsErrorCode = "ROUTE_NOT_FOUND"
+            $0.saved = [idAt(1_000).value: "completed"]
+        }
+        h.model.handle(.saved(workspace: workspace))
+        #expect(await eventually { savedReads(h) == before + 1 })
+        await h.settle()
+        await h.advance(milliseconds: AppModel.refreshRetries.reduce(0, +) + 1_000)
+        #expect(savedReads(h) == before + 1)
+        #expect(h.model.savedIDs[idAt(1_000)] == .inProgress)
+
+        h.server.edit { $0.savedIdsStatus = 200 }
+        h.model.handle(.saved(workspace: workspace))
+        #expect(await eventually { h.model.savedIDs[idAt(1_000)] == .completed })
+    }
+
     @Test("saved markers that could not be read at the start are asked again after a pause, and shown when they come")
     func savedRetried() async {
         let h = ModelHarness()

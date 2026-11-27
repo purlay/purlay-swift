@@ -10,18 +10,23 @@ extension AppModel {
         pins[message.channelId]?.contains { $0.message.id == message.id } ?? false
     }
 
-    /// Whether the saved markers were read; a failure is in `problems` and asked again by `reread`.
+    /// A missing Chat route leaves saved markers as last read and ends this refresh without a retry.
     @discardableResult
     func reloadSaved() async -> Bool {
         guard let api, let workspace else { return true }
         let session = contextGeneration
-        guard let ids = try? await api.listSavedIds(workspaceId: workspace.id.value) else { return false }
-        guard session == contextGeneration else { return true }
-        savedIDs = Dictionary(
-            ids.filter { !isPersonallyDeleted($0.messageId) }.map { ($0.messageId, $0.state) },
-            uniquingKeysWith: { _, last in last })
-        if savedOpen { await loadSaved(savedState) }
-        return true
+        do {
+            let ids = try await api.listSavedIds(workspaceId: workspace.id.value)
+            guard session == contextGeneration, !Task.isCancelled else { return true }
+            savedIDs = Dictionary(
+                ids.filter { !isPersonallyDeleted($0.messageId) }.map { ($0.messageId, $0.state) },
+                uniquingKeysWith: { _, last in last })
+            if savedOpen { await loadSaved(savedState) }
+            return true
+        } catch {
+            return session != contextGeneration || TransportError.isCancellation(error)
+                || (error as? APIError)?.isMissingRoute == true
+        }
     }
 
     @discardableResult
@@ -74,11 +79,8 @@ extension AppModel {
         savedGeneration &+= 1
         let generation = savedGeneration
         savedState = state
-        savedItems = []
-        savedCursor = nil
+        resetSavedResults()
         savedStatus = .loading
-        loadingMoreSaved = false
-        savedPaginationFailed = false
         do {
             let page = try await api.listSaved(
                 workspaceId: workspace.id.value,
@@ -88,11 +90,15 @@ extension AppModel {
             savedItems = page.data.filter { !isPersonallyDeleted($0.message.id) }
             savedCursor = page.nextCursor
             savedStatus = .loaded
-        } catch is CancellationError {
-            if generation == savedGeneration { savedStatus = .idle }
         } catch {
             guard generation == savedGeneration else { return }
-            savedStatus = .failed
+            if TransportError.isCancellation(error) {
+                savedStatus = .idle
+            } else if (error as? APIError)?.isMissingRoute == true {
+                dismissSaved()
+            } else {
+                savedStatus = .failed
+            }
         }
     }
 
@@ -115,8 +121,27 @@ extension AppModel {
             savedItems += page.data.filter { !held.contains($0.id) && !isPersonallyDeleted($0.message.id) }
             savedCursor = page.nextCursor
         } catch {
-            if generation == savedGeneration && !Task.isCancelled { savedPaginationFailed = true }
+            guard generation == savedGeneration, !TransportError.isCancellation(error) else { return }
+            if (error as? APIError)?.isMissingRoute == true {
+                dismissSaved()
+            } else {
+                savedPaginationFailed = true
+            }
         }
+    }
+
+    private func dismissSaved() {
+        savedGeneration &+= 1
+        savedOpen = false
+        resetSavedResults()
+        savedStatus = .idle
+    }
+
+    private func resetSavedResults() {
+        savedItems = []
+        savedCursor = nil
+        loadingMoreSaved = false
+        savedPaginationFailed = false
     }
 
     /// Moves a saved message between the person's lists only after the server accepts the change.

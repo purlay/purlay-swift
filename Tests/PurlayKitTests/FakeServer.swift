@@ -34,7 +34,9 @@ final class FakeServer: HTTPTransport {
         var scheduledDelay = 0
         var saved: [String: String] = [:]
         var savedIdsStatus = 200
+        var savedIdsErrorCode = "INTERNAL"
         var savedListStatus = 200
+        var savedListErrorCode = "INTERNAL"
         var savedPageSize = 20
         var savedDelays: [String: Int] = [:]
         var saveDelay = 0
@@ -130,6 +132,7 @@ final class FakeServer: HTTPTransport {
         /// The person's role in the workspace, as `/api/me` says it.
         var role = "member"
         var bookmarks: [String: [ChannelBookmark]] = [:]
+        var bookmarkReadError: (status: Int, code: String)?
         var bookmarkError: (status: Int, code: String)?
         var unreadStatus = 200
         var unreads: [(channel: String, from: String)] = []
@@ -904,13 +907,17 @@ final class FakeServer: HTTPTransport {
             return json(200, "{\"until\":\(until.map { "\"\($0)\"" } ?? "null")}")
         case ("GET", "/api/workspaces/\(Self.workspaceID)/saved/ids"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
+            if snapshot.savedIdsStatus != 200 {
+                return json(
+                    snapshot.savedIdsStatus, #"{"error":{"code":"\#(snapshot.savedIdsErrorCode)","message":"x"}}"#)
+            }
             let all = Array(snapshot.messages.values.joined()) + Array(snapshot.threads.values.joined())
             let items = snapshot.saved.compactMap { entry -> String? in
                 guard let found = all.first(where: { $0.id.value == entry.key }) else { return nil }
                 return
                     "{\"channelId\":\"\(found.channelId.value)\",\"messageId\":\"\(found.id.value)\",\"state\":\"\(entry.value)\"}"
             }
-            return json(snapshot.savedIdsStatus, "[\(items.joined(separator: ","))]")
+            return json(200, "[\(items.joined(separator: ","))]")
         case ("GET", "/api/workspaces/\(Self.workspaceID)/saved"):
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
             let query = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
@@ -918,7 +925,8 @@ final class FakeServer: HTTPTransport {
             let before = query.first { $0.name == "before" }?.value
             if let delay = snapshot.savedDelays[wanted] { try? await Task.sleep(for: .milliseconds(delay)) }
             if snapshot.savedListStatus != 200 {
-                return json(snapshot.savedListStatus, #"{"error":{"code":"INTERNAL","message":"x"}}"#)
+                return json(
+                    snapshot.savedListStatus, #"{"error":{"code":"\#(snapshot.savedListErrorCode)","message":"x"}}"#)
             }
             let all = Array(snapshot.messages.values.joined()) + Array(snapshot.threads.values.joined())
             let found = all.filter {
@@ -1208,6 +1216,9 @@ final class FakeServer: HTTPTransport {
         let list = snapshot.bookmarks[id] ?? []
         switch request.method {
         case "GET":
+            if let failure = snapshot.bookmarkReadError {
+                return json(failure.status, #"{"error":{"code":"\#(failure.code)","message":"x"}}"#)
+            }
             return json(200, Self.encoded(list))
         case "POST":
             guard let body = request.body, let input = try? JSONDecoder().decode(AddBookmarkRequest.self, from: body)

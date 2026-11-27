@@ -128,6 +128,45 @@ struct ChannelFeatureTests {
         #expect(!h.model.retainedDescription.contains("bookmarks"))
     }
 
+    @Test("a missing bookmarks route preserves links, while a genuine refusal still gets a background retry")
+    func bookmarksRefreshDuringRollout() async {
+        let docs = bookmark("Docs", "https://docs.example.com")
+        let h = await opened(bookmarks: [docs])
+        let before = calls(h, "GET", "/bookmarks").count
+        h.server.edit { $0.bookmarkReadError = (404, "ROUTE_NOT_FOUND") }
+        h.model.handle(.bookmarks(channel: first))
+        #expect(await eventually { calls(h, "GET", "/bookmarks").count == before + 1 })
+        await h.settle()
+        await h.advance(milliseconds: AppModel.refreshRetries.reduce(0, +) + 1_000)
+        #expect(calls(h, "GET", "/bookmarks").count == before + 1)
+        #expect(h.model.channelBookmarks == [docs])
+
+        h.server.edit { $0.bookmarkReadError = (403, "FORBIDDEN") }
+        h.model.handle(.bookmarks(channel: first))
+        #expect(await eventually { calls(h, "GET", "/bookmarks").count == before + 2 })
+        await h.settle()
+        h.server.edit {
+            $0.bookmarkReadError = nil
+            $0.bookmarks[first.value] = []
+        }
+        await h.advance(milliseconds: AppModel.refreshRetries[0])
+        #expect(await eventually { h.model.channelBookmarks.isEmpty })
+        #expect(calls(h, "GET", "/bookmarks").count == before + 3)
+    }
+
+    @Test("a refused bookmark removal restores the link when the reread meets a closed Chat route")
+    func bookmarkRollbackWithClosedRead() async {
+        let docs = bookmark("Docs", "https://docs.example.com")
+        let h = await opened(bookmarks: [docs])
+        h.server.edit {
+            $0.bookmarkError = (403, "FORBIDDEN")
+            $0.bookmarkReadError = (404, "ROUTE_NOT_FOUND")
+        }
+        await h.model.removeBookmark(docs)
+        #expect(h.model.channelBookmarks == [docs])
+        #expect(h.model.notices.contains { $0.kind == .bookmarkFailed })
+    }
+
     // MARK: Mark unread
 
     @Test(
