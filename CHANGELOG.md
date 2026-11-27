@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.2 — 2026-11-27
+
+- Keep a newer sign-in active when sign-out or a session-ended event arrives for an older sign-in.
+- Pause Chat operations when a server node refuses a Chat unsubscribe, and avoid retrying an unavailable sidebar group
+  route. The core connection stays available.
+- Keep an open thread readable when a server node cannot load or change its follow setting. Refresh the setting when the route is available again.
+
 ## 0.3.1 — 2026-11-27
 
 - Dismiss Threads, Saved Messages, Open Topics, Scheduled Messages, Reminders and Pins if a server node does not serve
