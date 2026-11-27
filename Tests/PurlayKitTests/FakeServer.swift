@@ -100,6 +100,7 @@ final class FakeServer: HTTPTransport {
         var savedSearchLimit = 50
         var savedSearchDelay = 0
         var searchDelays: [String: Int] = [:]
+        var searchGate: Gate?
         var aroundNewer: String?
         var deepWorkUntil: String?
         var deepWorkStatus = 200
@@ -697,6 +698,10 @@ final class FakeServer: HTTPTransport {
             guard hasSession, snapshot.sessionValid else { return unauthenticated() }
             let items = URLComponents(url: request.url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let q = items.first { $0.name == "q" }?.value ?? ""
+            if let gate = snapshot.searchGate {
+                await gate.wait()
+                try Task.checkCancellation()
+            }
             if let wait = snapshot.searchDelays[q] { try await Task.sleep(for: .milliseconds(wait)) }
             if snapshot.searchStatus != 200 {
                 return json(snapshot.searchStatus, #"{"error":{"code":"\#(snapshot.searchErrorCode)","message":"x"}}"#)
