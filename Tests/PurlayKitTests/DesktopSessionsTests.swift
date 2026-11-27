@@ -101,6 +101,63 @@ struct DesktopSessionsTests {
         #expect(first.me == nil && first.engine == nil)
     }
 
+    @Test("a terminal socket ends only workspaces sharing its original credential", arguments: [false, true])
+    func socketEndWithPeer(replaced: Bool) async throws {
+        let h = ModelHarness()
+        try h.rememberedSession()
+        let desktop = desktop(h)
+        await desktop.launch()
+        let first = desktop.active
+        let firstSocket = try #require(h.sockets.first)
+        let address = try #require(first.server)
+        let original = try #require(try h.sessions.load(for: address))
+        let replacement = StoredSession(cookie: "replacement-credential", expiresAt: nil, origin: original.origin)
+        if replaced { try h.sessions.save(replacement, for: address) }
+        await addSecond(desktop)
+        let studio = desktop.active
+        let channel = Uuid(channel(1))!
+        studio.setDraft("studio draft", for: channel)
+        firstSocket.handlers.opened()
+        firstSocket.handlers.message(#"{"event":"SESSION_ENDED","ts":1,"data":{"reason":"account-deleted"}}"#)
+
+        #expect(await eventually { first.phase == .signedOut })
+        #expect(studio.phase == (replaced ? .ready : .signedOut))
+        #expect(try h.sessions.load(for: address) == (replaced ? replacement : nil))
+        if replaced { #expect(studio.draft(for: channel) == "studio draft") }
+        #expect(!h.server.requests.contains { $0.url.path == "/auth/logout" })
+    }
+
+    @Test("an old in-flight 401 after reconnect does not retire the replacement account")
+    func lateUnauthorizedAfterReplacement() async throws {
+        let h = ModelHarness()
+        await h.signedIn()
+        let address = try #require(h.model.server)
+        let original = try #require(try h.sessions.load(for: address))
+        let replacement = StoredSession(cookie: "replacement-credential", expiresAt: nil, origin: original.origin)
+        let old = try #require(h.model.api)
+        let response = Gate()
+        let prior = h.server.requests.filter { $0.url.path == "/api/me" }.count
+        h.server.edit {
+            $0.meStatus = 401
+            $0.beforeMeResponse = { await response.wait() }
+        }
+        let pending = Task { try await old.getMe() }
+        #expect(await eventually { h.server.requests.filter { $0.url.path == "/api/me" }.count == prior + 1 })
+        try h.sessions.save(replacement, for: address)
+        h.server.edit {
+            $0.meStatus = 200
+            $0.beforeMeResponse = nil
+        }
+        await h.model.connect()
+        #expect(h.model.phase == .ready)
+        await response.open()
+        await #expect(throws: APIError.self) { try await pending.value }
+
+        #expect(h.model.phase == .ready)
+        #expect(try h.sessions.load(for: address) == replacement)
+        #expect(!h.server.requests.contains { $0.url.path == "/auth/logout" })
+    }
+
     @Test("a refused sign-out holds sends across workspaces that share the credential")
     func signOutHoldsAnotherWorkspace() async throws {
         let h = ModelHarness()
